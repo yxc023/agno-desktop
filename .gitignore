@@ -48,3 +48,4 @@ coverage/
 
 # Logs from dev runs
 *.log
+.worktrees
