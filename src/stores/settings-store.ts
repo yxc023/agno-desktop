@@ -28,7 +28,7 @@ export interface Settings {
   sidebarCollapsed: boolean;
 }
 
-const KEY = "agno-v2:settings";
+const KEY = "agno:settings";
 
 const defaults: Settings = {
   theme: "dark",

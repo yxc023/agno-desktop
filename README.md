@@ -1,10 +1,8 @@
-# Agno Desktop v2
+# Agno Desktop
 
 > **多实例、本地优先的 AGNO AgentOS 对话台** — 一个连接任意 AGNO 实例的可视化前端。
 
-[![Tech](https://img.shields.io/badge/React-19-61dafb)](https://react.dev) [![Vite](https://img.shields.io/badge/Vite-8-646cff)](https://vitejs.dev) [![Tailwind](https://img.shields.io/badge/Tailwind-4-38bdf8)](https://tailwindcss.com) [![AGNO](https://img.shields.io/badge/AGNO-2.6.x-7c3aed)](https://docs.agno.com)
-
-> 🆚 v1 是 Tauri 桌面壳 + SolidJS；**v2 是纯 Web 前端 + React 19 + 多实例**，体积更小、扩展更强。
+[![Tech](https://img.shields.io/badge/React-19-61dafb)](https://react.dev) [![Vite](https://img.shields.io/badge/Vite-8-646cff)](https://vitejs.dev) [![Tailwind](https://img.shields.io/badge/Tailwind-4-38bdf8)](https://tailwindcss.com) [![Tauri](https://img.shields.io/badge/Tauri-2-FFC131)](https://tauri.app) [![AGNO](https://img.shields.io/badge/AGNO-2.6.x-7c3aed)](https://docs.agno.com)
 
 ## 一句话定义
 
@@ -116,7 +114,7 @@ AGNO_PROXY_TARGET=http://192.168.1.100:8000 bun run dev
 ## 项目结构
 
 ```
-agno-desktop-v2/
+agno-desktop/
 ├── src/
 │   ├── main.tsx                       # 入口
 │   ├── App.tsx                        # 路由
@@ -199,7 +197,7 @@ agno-desktop-v2/
 | v0.1 | ✅ 完成 | 聊天核心：多实例、SSE 流式、工具调用、Markdown、Session 管理 |
 | v0.2 | 🚧 计划 | Memory 浏览、Knowledge 搜索、Trace 查看 |
 | v1.0 | 📋 计划 | Approval 完整流、CRUD agents、Metrics、Settings 增强 |
-| v2.0 | 💭 设想 | Tauri 包装、跨平台、多窗口 |
+| v2.0 | ✅ 完成 | Tauri 桌面壳（CORS 旁路、5.8 MB dmg），原生窗口 |
 
 ## 已知问题 / 限制
 

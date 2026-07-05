@@ -1,4 +1,4 @@
-# Agno Desktop v2 设计稿
+# Agno Desktop 设计稿
 
 > v0.1 范围：聊天核心
 
