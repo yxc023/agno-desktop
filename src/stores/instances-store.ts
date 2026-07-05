@@ -27,8 +27,8 @@ export interface AgnoInstance {
   lastAgentsError?: string | null;
 }
 
-const STORAGE_KEY = "agno-v2:instances";
-const ACTIVE_KEY = "agno-v2:active-instance";
+const STORAGE_KEY = "agno:instances";
+const ACTIVE_KEY = "agno:active-instance";
 
 interface InstancesState {
   instances: AgnoInstance[];
