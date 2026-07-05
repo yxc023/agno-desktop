@@ -26,11 +26,12 @@ import type {
   AgWorkflowResponse,
 } from "./agno-types";
 import { type AgSSEEvent, parseSSE, parseSSEData } from "./sse-parser";
+import { createFetcher } from "./tauri-fetch";
 
 export interface AgnoClientOptions {
   baseUrl: string;
   token?: string | null;
-  /** 可选自定义 fetcher（注入测试或拦截器） */
+  /** 可选自定义 fetcher（注入测试或拦截器）。默认走 tauri-fetch（自动选浏览器 / Tauri）。 */
   fetcher?: typeof fetch;
 }
 
@@ -42,7 +43,7 @@ export class AgnoClient {
   constructor(opts: AgnoClientOptions) {
     this.baseUrl = opts.baseUrl.replace(/\/+$/, "");
     this.token = opts.token ?? null;
-    this.fetcher = opts.fetcher ?? fetch.bind(globalThis);
+    this.fetcher = opts.fetcher ?? createFetcher();
   }
 
   setToken(token: string | null) {
