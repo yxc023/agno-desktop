@@ -338,6 +338,8 @@ export class ChatRunner {
           ...this.topMessage,
           subMessages: [...(this.topMessage.subMessages ?? []), sub],
         };
+        // 也在 top.parts 末尾注入一个 marker，让 chip 出现在"team 内容流"的当前位置
+        this.injectSubMarker(this.topMessage, sub);
         callbacks.onMessageUpdate(this.topMessage);
       }
       callbacks.onSubMessageCreated?.(this.topMessage?.id ?? "", sub);
@@ -361,14 +363,26 @@ export class ChatRunner {
     this.subParents.set(runId, parentRunId);
 
     parent.subMessages = [...(parent.subMessages ?? []), sub];
-    if (parent === this.topMessage) {
-      callbacks.onMessageUpdate(parent);
-    } else {
-      // 嵌套 sub 的父级是另一个 sub
-      callbacks.onMessageUpdate(parent);
-    }
+
+    // 把 marker 注入 parent 的 parts[] 末尾（"team 流到此处委派给 sub"）
+    this.injectSubMarker(parent, sub);
+
+    callbacks.onMessageUpdate(parent);
     callbacks.onSubMessageCreated?.(parent.id, sub);
     return sub;
+  }
+
+  /**
+   * 把一个 sub_message_marker part 追加到指定父 message 的 parts[] 末尾。
+   * 这样 chip 会出现在"team 自己的内容流"里 sub 启动的那一刻。
+   */
+  private injectSubMarker(parent: ChatMessage, sub: ChatMessage) {
+    // 仅最外层注入 marker；嵌套 sub-of-sub 的渲染交给侧边栏内部
+    if (parent !== this.topMessage) return;
+    parent.parts.push({
+      type: "sub_message_marker",
+      subMessageId: sub.id,
+    });
   }
 
   /**

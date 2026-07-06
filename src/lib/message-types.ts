@@ -11,7 +11,8 @@ export type MessagePart =
   | ImagePart
   | AudioPart
   | VideoPart
-  | ErrorPart;
+  | ErrorPart
+  | SubMessageMarker;
 
 export interface TextPart {
   type: "text";
@@ -80,6 +81,22 @@ export interface ErrorPart {
   type: "error";
   message: string;
   details?: string;
+}
+
+/**
+ * 内嵌在 message.parts[] 里的"子 agent 占位"。
+ *
+ * 出现一个 marker 即代表"在这一位置/这一刻，team 把发言权交给了某个 sub-agent"；
+ * UI 渲染时把它替换成一个紧凑的 chip（点击进入右侧抽屉），而不是直接展开内容。
+ *
+ * marker 本身可以保证串行播放顺序：sub-agent 内容另存于
+ * `ChatMessage.subMessages[]`，marker 的 `subMessageId` 引用 sub.id。
+ */
+export interface SubMessageMarker {
+  type: "sub_message_marker";
+  subMessageId: string;
+  /** Optional preview tooltip / summary from runner */
+  summary?: string;
 }
 
 export type MessageRole = "user" | "assistant" | "system";
