@@ -73,7 +73,17 @@ function replaceInTree(
   updater: (m: ChatMessage) => ChatMessage
 ): ChatMessage[] {
   return messages.map((m) => {
-    if (m.id === id) return updater(m);
+    if (m.id === id) {
+      const next = updater(m);
+      // Force a fresh object reference when the updater returns the same
+      // instance it received. ChatRunner mutates target.parts in place and
+      // then passes the same target via onMessageUpdate → updateAnyMessage;
+      // selectors subscribed to a specific sub-message (e.g.
+      // SubAgentSidePanel via useChatStore(s => findInTree(...))) would
+      // otherwise see Object.is(prev, next) === true and skip re-render,
+      // freezing the streaming UI even though the store has changed.
+      return next === m ? { ...m } : next;
+    }
     if (m.subMessages && m.subMessages.length > 0) {
       return {
         ...m,
@@ -701,16 +711,34 @@ export const useChatStore = create<ChatState>((set, get) => ({
               `tc-${Date.now()}-${Math.random()}`;
             const toolName = toolObj.tool_name ?? "tool";
             const args = toolObj.tool_args ?? {};
-            const part: ToolCallPart = {
-              type: "tool_call",
-              toolCallId: tcid,
-              toolName,
-              args,
-              status: "calling",
-              startedAt: evTs || Date.now(),
-            };
-            parts.push(part);
-            perTc.set(tcid, { idx: parts.length - 1, startedAt: part.startedAt, tc: toolObj });
+            const existing = perTc.get(tcid);
+            if (existing != null) {
+              // 同一个 tool_call_id 重复到达 Started（AGNO 重连/重发场景）——
+              // 不再 push 新 part，而是把最新 tool_args 合并到第一份 part 上，
+              // 并把 perTc 指向最新的位置。
+              const oldPart = parts[existing.idx] as ToolCallPart;
+              parts[existing.idx] = {
+                ...oldPart,
+                toolName,
+                args: args ?? oldPart.args,
+              };
+              existing.tc = toolObj;
+            } else {
+              const part: ToolCallPart = {
+                type: "tool_call",
+                toolCallId: tcid,
+                toolName,
+                args,
+                status: "calling",
+                startedAt: evTs || Date.now(),
+              };
+              parts.push(part);
+              perTc.set(tcid, {
+                idx: parts.length - 1,
+                startedAt: part.startedAt,
+                tc: toolObj,
+              });
+            }
           } else if (
             (evName === "ToolCallCompleted" ||
               evName === "ToolCallResult") &&
@@ -731,22 +759,39 @@ export const useChatStore = create<ChatState>((set, get) => ({
             }
             const tracked = perTc.get(tcid);
             if (tracked != null) {
-              const existing = parts[tracked.idx] as ToolCallPart;
               const metrics = toolObj.metrics;
-              parts[tracked.idx] = {
-                ...existing,
-                result: resultValue,
-                status: toolObj.tool_call_error ? "error" : "completed",
-                error: toolObj.tool_call_error
-                  ? String(resultValue ?? "tool error")
-                  : undefined,
-                metrics,
-                endedAt: evTs || Date.now(),
-                durationMs:
-                  metrics?.duration != null
-                    ? Math.round(metrics.duration * 1000)
-                    : (evTs || Date.now()) - tracked.startedAt,
-              };
+              const errText = toolObj.tool_call_error
+                ? String(resultValue ?? "tool error")
+                : undefined;
+              const endedAt = evTs || Date.now();
+              const durationMs =
+                metrics?.duration != null
+                  ? Math.round(metrics.duration * 1000)
+                  : endedAt - tracked.startedAt;
+              // 同一个 tool_call_id 可能存在多处重复 part（重发的 Started 事件遗留、
+              // 或者 retry 场景）。更新**所有**匹配的位置，并把 perTc 指向最后一个。
+              let lastIdx = tracked.idx;
+              for (let i = 0; i < parts.length; i++) {
+                const p = parts[i];
+                if (p.type === "tool_call" && p.toolCallId === tcid) {
+                  parts[i] = {
+                    ...p,
+                    result: resultValue,
+                    status: toolObj.tool_call_error ? "error" : "completed",
+                    error: errText,
+                    metrics,
+                    endedAt,
+                    durationMs:
+                      // 时长按**该 part 的**startedAt 与 endedAt 计算
+                      // （perTc 里存的是首次 Started 时间，对重发新建的 part 不准）。
+                      metrics?.duration != null
+                        ? Math.round(metrics.duration * 1000)
+                        : endedAt - p.startedAt,
+                  };
+                  lastIdx = i;
+                }
+              }
+              perTc.set(tcid, { ...tracked, idx: lastIdx });
             } else {
               // 没看到 Started，直接 Completed——也 push 一条 completed 的
               const part: ToolCallPart = {
@@ -761,7 +806,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
               };
               parts.push(part);
             }
-            attachedRunIds.add(subRunId + ":" + tcid);
+            // 注意：标记 attachedRunIds 不在这里做——见下方 attach() 处。
+            // 这里之前是 `subRunId + ":" + tcid`（复合 key），与 Stage B/C 的 bare run_id
+            // lookup (line ~959 / ~971) 形状不一致，导致 dedup 失效，
+            // 同一个 sub-agent 会在 Stage A 和 Stage B/C 各附加一次。
           }
 
           // sub-agent 最终文字输出（RunCompleted.content）
@@ -900,6 +948,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 outerToolCallId: tcId,
               });
               seen.add(s.runId);
+              // 关键：用 bare runId 标记，Stage B/C 的
+              // `attachedRunIds.has(cr.run_id)` 才能正确去重，
+              // 防止同一个 sub-agent 被 events[] 路径和 runs[].parent_run_id
+              // 路径分别挂一次（出现两个 chip）。
+              attachedRunIds.add(s.runId);
             }
           }
           childMessagesByParent.set(root.id, list);
@@ -1244,22 +1297,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
       undefined;
     runner.abort();
 
-    // 把对应 session 内还在 streaming 的 top + sub 全部标记为 cancelled
+    // 把对应 session 内还在 streaming / paused 的所有消息（含任意深度的 sub）标记为 cancelled。
     if (sessionId) {
       const list = get().messagesBySession[sessionId] ?? [];
-      const markCancelled = (m: { id: string; status: string; parentMessageId?: string }) => {
-        if (m.status === "streaming" || m.status === "paused") {
-          const nextStatus = m.status === "paused" ? "paused" : "cancelled";
-          get().updateAnyMessage(sessionId, m.id, (cur) => ({
-            ...cur,
-            status: nextStatus as ChatMessage["status"],
-          }));
+      const update = get().updateAnyMessage;
+      const walk = (ms: ChatMessage[]) => {
+        for (const m of ms) {
+          if (m.status === "streaming" || m.status === "paused") {
+            const nextStatus = m.status === "paused" ? "paused" : "cancelled";
+            update(sessionId, m.id, (cur) => ({
+              ...cur,
+              status: nextStatus as ChatMessage["status"],
+            }));
+          }
+          if (m.subMessages && m.subMessages.length > 0) {
+            walk(m.subMessages);
+          }
         }
       };
-      for (const m of list) {
-        markCancelled(m);
-        if (m.subMessages) for (const s of m.subMessages) markCancelled(s);
-      }
+      walk(list);
     }
 
     if (runId && agentId && activeId) {
