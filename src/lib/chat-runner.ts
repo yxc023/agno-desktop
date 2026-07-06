@@ -83,24 +83,12 @@ export class ChatRunner {
   }
 
   abort() {
+    // 设置 abort signal；store 端的 cancelRun 会同时把对应消息标记为
+    // cancelled/paused（chat-store.ts 的 cancelRun → updateAnyMessage），
+    // 不需要再在 runner 本地重复做这件事——本地 mutation 不会被任何
+    // callback 推到 store，纯粹是 dead code。
     this.abortController?.abort();
     this.abortController = null;
-    this.markAllCancelled();
-  }
-
-  private markAllCancelled() {
-    // Recursive walk — sub-of-sub messages live under sub.subMessages[].
-    // Without recursion, deeply nested sub-agents would be left in
-    // "streaming" / "paused" after abort, leading to zombie chips in the panel.
-    const visit = (m: ChatMessage) => {
-      m.status = m.parts.some(
-        (p) => p.type === "tool_call" && p.status === "calling"
-      )
-        ? "paused"
-        : "cancelled";
-      for (const s of m.subMessages ?? []) visit(s);
-    };
-    if (this.topMessage) visit(this.topMessage);
   }
 
   async run(

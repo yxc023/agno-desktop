@@ -274,6 +274,17 @@ function runToChatMessages(
     }
 
     if (parts.length === 0) {
+      // AGNO sometimes emits an "anchor" assistant message with no content,
+      // no reasoning, and no tool calls — usually because the sub-agent
+      // delegation that follows is the only thing this turn produced. We
+      // currently drop these (matching flushAssistant's behavior), but log
+      // a warning so future debugging isn't a silent black hole.
+      if (typeof console !== "undefined") {
+        console.debug(
+          "runToChatMessages: dropping empty assistant message",
+          { id: m.id, role: m.role, hasToolCalls: !!m.tool_calls?.length }
+        );
+      }
       continue;
     }
 
@@ -601,7 +612,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
         } else {
           // 新的 assistant message
           flushAssistant();
-          if (parts.length === 0) continue; // 跳过空 assistant
+          if (parts.length === 0) {
+            // AGNO 偶尔发出"锚定"用的空 assistant：没 content、没 reasoning、没 tool_calls。
+            // 跳掉它（与 runToChatMessages 行为一致），但打 debug log 以便排查。
+            if (typeof console !== "undefined") {
+              console.debug(
+                "loadHistory: dropping empty assistant from chat_history",
+                { id: m.id, role: m.role }
+              );
+            }
+            continue;
+          }
           currentAssistant = {
             id: m.id ?? generateId(),
             role: "assistant",
@@ -649,6 +670,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
       ): ChatMessage => {
         const parts: MessagePart[] = [];
         let reasoningText = "";
+        const reasoningSteps: Array<{
+          title?: string;
+          reasoning?: string;
+          action?: string;
+          result?: string;
+        }> = [];
         let agentName = "";
         let agentId = "";
         let createdAt = 0;
@@ -670,7 +697,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
             if (!createdAt) createdAt = evTs;
           }
 
-          // reasoning
+          const evName: string = ev.event ?? "";
+          const toolObj: any = ev.tool ?? null;
+
+          // reasoning (text)
           const r =
             typeof ev.reasoning_content === "string"
               ? ev.reasoning_content
@@ -678,11 +708,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
               ? ev.reasoning
               : null;
           if (r) reasoningText += r;
-          // reason_steps (AGNO emits via ReasoningStep event)
-          // (not handled — events schema missing; reasoning content only)
 
-          const evName: string = ev.event ?? "";
-          const toolObj: any = ev.tool ?? null;
+          // reasoning (per-step) — AGNO emits these either as
+          // `ev.event === "ReasoningStep"` with the step in
+          // `ev.reasoning_step`, or inline via `ev.reasoning_step`
+          // attached to other events.
+          const stepObj =
+            (ev.reasoning_step ?? ev.step) &&
+            typeof (ev.reasoning_step ?? ev.step) === "object"
+              ? (ev.reasoning_step ?? ev.step)
+              : null;
+          if (stepObj) {
+            reasoningSteps.push({
+              title: stepObj.title,
+              reasoning: stepObj.reasoning,
+              action: stepObj.action,
+              result: stepObj.result,
+            });
+          }
 
           if (
             (evName === "ToolCallStarted" || evName === "ToolCallStartedDelta") &&
@@ -809,8 +852,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
           }
         }
 
-        if (reasoningText.trim()) {
-          parts.unshift({ type: "reasoning", text: reasoningText });
+        if (reasoningText.trim() || reasoningSteps.length > 0) {
+          parts.unshift({
+            type: "reasoning",
+            text: reasoningText,
+            steps: reasoningSteps.length > 0 ? reasoningSteps : undefined,
+          });
         }
 
         const durationMs =
@@ -911,16 +958,31 @@ export const useChatStore = create<ChatState>((set, get) => ({
       };
 
         // 阶段 A：从 events[] 提取——这是 AGNO 当前最可靠的数据源
-      for (const run of runs) {
-        const events = run.events;
-        if (!Array.isArray(events) || events.length === 0) continue;
-        const outerAgentName =
-          run.agent_name ??
-          (events.find((e: any) => e?.agent_name)?.agent_name as string) ??
+        for (const run of runs) {
+          const events = run.events;
+          if (!Array.isArray(events) || events.length === 0) continue;
+          const outerAgentName =
+            run.agent_name ??
+            (events.find((e: any) => e?.agent_name)?.agent_name as string) ??
           "";
-        if (!outerAgentName) continue;
+        if (!outerAgentName) {
+          // events[] 是有的，但没有任何 agent_name。可能是 AGNO 改了 schema，
+          // 也可能是 events[] 都是 sub-agent 事件。这里打 warning 以便排查，
+          // 不会因此把整个 sub-agent 重建路径关掉（仍会走 Stage B/C 兜底）。
+          if (typeof console !== "undefined") {
+            console.warn(
+              "loadHistory: events[] present but no agent_name; sub-agent reconstruction for this run may be partial",
+              { run_id: run.run_id, eventCount: events.length }
+            );
+          }
+          continue;
+        }
         const subsByOuterTc = extractSubAgents(events, outerAgentName);
-        if (subsByOuterTc.size === 0) continue;
+        if (subsByOuterTc.size === 0) {
+          // events[] 里有 outer 标识但没拆出任何 sub-agent——多半是
+          // outer 没调 sub 工具。silent 即可，不打 warning。
+          continue;
+        }
 
         // 把 sub-agents 通过外层 tool_call_id 挂到 chat_history 的 assistant 上。
         // 优先用 runId 匹配；失败时回退到"扫所有 assistant message 看 tool_calls[] 是否包含 tcId"。
@@ -992,6 +1054,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
             sm.displayName,
         };
       };
+      // 阶段 B：Team 模式 — runs[].parent_run_id 真有值的情况
+      // (WorkspaceContextProvider 模式 events[] 已经覆盖；这里是 Agno Team 的入口)
+      //
+      // 多级嵌套处理：buildSubFromChildRun 之前 hardcode 了 parentMessageId = root.id，
+      // 让 sub-of-sub 失去真实父级（被当 root 的兄弟挂上去）。现在用 runIdToSub
+      // 跟踪已创建的 sub，cr.parent_run_id 指向某个 sub 时，把它挂到那个 sub 下。
+      const runIdToSub = new Map<string, ChatMessage>();
       for (const root of messages) {
         if (!root.runId) continue;
         const childRuns = childRunsByParentRunId.get(root.runId);
@@ -1000,12 +1069,34 @@ export const useChatStore = create<ChatState>((set, get) => ({
         for (const cr of childRuns) {
           if (!cr.run_id || attachedRunIds.has(cr.run_id)) continue;
           attachedRunIds.add(cr.run_id);
+          const subMsg = buildSubFromChildRun(cr, root.id);
+          runIdToSub.set(cr.run_id, subMsg);
           list.push({
-            subMessage: buildSubFromChildRun(cr, root.id),
+            subMessage: subMsg,
             outerToolCallId: null, // Team 模式暂时没法锚定具体 tool_call
           });
         }
         childMessagesByParent.set(root.id, list);
+      }
+
+      // 多级嵌套（sub-of-sub）：cr.parent_run_id 指向某个已创建的 sub 时，
+      // 把这个 cr 挂到那个 sub 下面，而不是 root。
+      // 拓扑：parentRunId 总是先于子 run_id 出现（AGNO 的事件排序保证），
+      // 所以 runIdToSub 一定先有 parent。
+      for (const cr of runs) {
+        if (!cr.run_id || !cr.parent_run_id) continue;
+        if (attachedRunIds.has(cr.run_id)) continue;
+        const parentSub = runIdToSub.get(cr.parent_run_id);
+        if (!parentSub) continue; // 既不是 root 的子（Stage B 第一段漏过）、也不是已知 sub 的子
+        attachedRunIds.add(cr.run_id);
+        const subMsg = buildSubFromChildRun(cr, parentSub.id);
+        runIdToSub.set(cr.run_id, subMsg);
+        const list = childMessagesByParent.get(parentSub.id) ?? [];
+        list.push({
+          subMessage: subMsg,
+          outerToolCallId: null,
+        });
+        childMessagesByParent.set(parentSub.id, list);
       }
 
       // 阶段 C：timestamp fallback — 完全没匹配到的孤儿 child runs
@@ -1064,15 +1155,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
       }
 
-      // 给每个 root message 注入 marker part，让 chip 出现在 sub-agent 触发处
-      const finalMessages = messages.map((m) => {
-        const anchors = childMessagesByParent.get(m.id);
-        if (!anchors || anchors.length === 0) return m;
+      // 给每个 root message 注入 marker part，让 chip 出现在 sub-agent 触发处。
+      // 递归处理：sub-of-sub 的 sub 也要走同样的流程。
+      const attachAnchors = (msg: ChatMessage): ChatMessage => {
+        const anchors = childMessagesByParent.get(msg.id);
+        if (!anchors || anchors.length === 0) return msg;
         // 1) 把 sub-messages 装进 message（取出去 anchor 信息）
         const subs = anchors
           .map((a) => a.subMessage)
           .sort((a, b) => a.createdAt - b.createdAt);
-        const next: ChatMessage = { ...m, subMessages: subs };
+        // 递归：sub 自己也可能有 childMessagesByParent 项（sub-of-sub）
+        const subsWithChildren = subs.map((s) => attachAnchors(s));
+        const next: ChatMessage = { ...msg, subMessages: subsWithChildren };
 
         // 2) 收集已有的 marker（避免重复）
         const existingMarkers = new Set<string>();
@@ -1138,7 +1232,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
         next.parts = newParts;
         return next;
-      });
+      };
+
+      const finalMessages = messages.map((m) => attachAnchors(m));
 
       get().setMessages(sessionId, finalMessages);
     } catch (err) {
