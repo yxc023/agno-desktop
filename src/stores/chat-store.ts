@@ -109,18 +109,41 @@ const MESSAGES_BY_SESSION_LRU_LIMIT = 20;
  *  用于检测"我的请求还没回，又有新的 loadHistory 启动了"，过时回调直接 no-op。 */
 const loadHistoryGeneration = new Map<string, number>();
 
+/** Build a recursive id → message index for a chat tree. */
+function buildIdIndex(
+  messages: ChatMessage[]
+): Map<string, ChatMessage> {
+  const out = new Map<string, ChatMessage>();
+  const walk = (ms: ChatMessage[]) => {
+    for (const m of ms) {
+      if (m.id) out.set(m.id, m);
+      if (m.subMessages && m.subMessages.length > 0) walk(m.subMessages);
+    }
+  };
+  walk(messages);
+  return out;
+}
+
 /** 给 set() 用的 LRU 收紧辅助：在 messagesBySession 中保留最近访问的 N 个。 */
 function pruneMessagesBySession(
   map: Record<string, ChatMessage[]>,
   limit: number
-): Record<string, ChatMessage[]> {
+): Record<string, ChatMessage[]>;
+function pruneMessagesBySession<T>(
+  map: Record<string, T>,
+  limit: number
+): Record<string, T>;
+function pruneMessagesBySession<T>(
+  map: Record<string, T>,
+  limit: number
+): Record<string, T> {
   const keys = Object.keys(map);
   if (keys.length <= limit) return map;
   // Object key order is insertion order in modern JS engines; we treat
   // it as access order on best-effort (the touched sessions are
   // re-assigned below via a fresh object).
   const keep = new Set(keys.slice(keys.length - limit));
-  const next: Record<string, ChatMessage[]> = {};
+  const next: Record<string, T> = {};
   for (const k of keys) {
     if (keep.has(k)) next[k] = map[k];
   }
@@ -134,6 +157,13 @@ function pruneMessagesBySession(
 interface ChatState {
   /** 当前 session 的所有 top-level 消息 */
   messagesBySession: Record<string, ChatMessage[]>;
+  /**
+   * 每个 session 的 id → ChatMessage 索引（任意深度）。在 setMessages 时
+   * 重建，使 SubAgentSidePanel / SubMessageMarkerChip 的 findInTree
+   * 退化为 O(1) lookup。Chats with many sub-messages or deep
+   * sub-of-sub trees benefit the most.
+   */
+  idIndexBySession: Record<string, Map<string, ChatMessage>>;
   /** 当前选中的 agent/team/workflow id */
   selectedAgentId: string | null;
   selectedType: "agent" | "team" | "workflow";
@@ -360,6 +390,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   runner: null,
   loadingHistory: false,
   loadHistoryError: null,
+  idIndexBySession: {},
 
   setSelectedAgent: (id, type = "agent") =>
     set({ selectedAgentId: id, selectedType: type }),
@@ -372,9 +403,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
         if (k !== sessionId) next[k] = v;
       }
       next[sessionId] = messages;
+      // idIndex 同步：每个 setMessages 都重建一次（O(N) 单次扫描），
+      // 之后 findInTree 退化为 O(1)。LRU 收紧时丢弃的 session 也丢弃 index。
+      const newIndex: Record<string, Map<string, ChatMessage>> = {};
+      for (const [k, v] of Object.entries(s.idIndexBySession)) {
+        if (k !== sessionId) newIndex[k] = v;
+      }
+      newIndex[sessionId] = buildIdIndex(messages);
       return {
         messagesBySession: pruneMessagesBySession(
           next,
+          MESSAGES_BY_SESSION_LRU_LIMIT
+        ),
+        idIndexBySession: pruneMessagesBySession(
+          newIndex,
           MESSAGES_BY_SESSION_LRU_LIMIT
         ),
       };
@@ -1538,5 +1580,23 @@ export function useCurrentSessionMessages(sessionId: string | null) {
   return useChatStore((s) => {
     if (!sessionId) return EMPTY_MESSAGES;
     return s.messagesBySession[sessionId] ?? EMPTY_MESSAGES;
+  });
+}
+
+/**
+ * 在 store 维护的 id 索引里 O(1) 查 sub-message。组件用 \`useSubMessageById\` 替代
+ * 直接 \`findInTree(messages, id)\` 避免每次 render 都做 O(depth × siblings) 扫描。
+ * 当 id 索引中找不到时返回 null（与 findInTree 行为一致）。
+ */
+const EMPTY_MESSAGE: ChatMessage | null = null;
+export function useSubMessageById(
+  sessionId: string | null,
+  subMessageId: string | null
+): ChatMessage | null {
+  return useChatStore((s) => {
+    if (!sessionId || !subMessageId) return null;
+    const idx = s.idIndexBySession[sessionId];
+    if (!idx) return null;
+    return idx.get(subMessageId) ?? null;
   });
 }

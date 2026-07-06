@@ -23,7 +23,7 @@ import { cn } from "@/lib/utils";
 import { Markdown } from "@/components/markdown/Markdown";
 import { ReasoningBlock } from "./ReasoningBlock";
 import { ToolCallCard } from "./ToolCallCard";
-import { useChatStore } from "@/stores/chat-store";
+import { useChatStore, useSubMessageById } from "@/stores/chat-store";
 import type { ChatMessage, MessagePart } from "@/lib/message-types";
 
 interface MessageContentProps {
@@ -217,11 +217,8 @@ function SubMessageMarkerChip({
   onOpenSubAgent?: (subMessageId: string) => void;
 }) {
   const sessionId = message.sessionId;
-  const sub = useChatStore((s) => {
-    if (!message.sessionId) return null;
-    const list = s.messagesBySession[message.sessionId] ?? [];
-    return findInTree(list, part.subMessageId);
-  });
+  // 用 store 维护的 id 索引 O(1) 查 sub，替代 findInTree 的 O(N) walk。
+  const sub = useSubMessageById(message.sessionId ?? null, part.subMessageId);
 
   // loading → "unavailable" 超时。3s 后 sub 仍找不到，视为 orphan marker
   // (例如 history 丢了 sub-message / 跳号 / event 缺失)，UI 不再让用户以为
@@ -299,18 +296,4 @@ function SubMessageMarkerChip({
       <ArrowRight className="ml-1 h-3 w-3 shrink-0 text-muted-foreground/60 transition-transform group-hover:translate-x-0.5 group-hover:text-accent" />
     </button>
   );
-}
-
-function findInTree(
-  messages: ChatMessage[],
-  id: string
-): ChatMessage | null {
-  for (const m of messages) {
-    if (m.id === id) return m;
-    if (m.subMessages && m.subMessages.length > 0) {
-      const r = findInTree(m.subMessages, id);
-      if (r) return r;
-    }
-  }
-  return null;
 }
