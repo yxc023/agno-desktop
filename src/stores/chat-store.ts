@@ -1222,7 +1222,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         // 1) 把 sub-messages 装进 message（取出去 anchor 信息）
         const subs = anchors
           .map((a) => a.subMessage)
-          .sort((a, b) => a.createdAt - b.createdAt);
+          // 同一 outer tool_call 在 AGNO 重发场景下可能塞进两个 createdAt 一样的
+          // sub-message。tie-breaker 用 subMessage.id 让顺序 deterministic。
+          .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
         // 递归：sub 自己也可能有 childMessagesByParent 项（sub-of-sub）
         const subsWithChildren = subs.map((s) => attachAnchors(s));
         const next: ChatMessage = { ...msg, subMessages: subsWithChildren };

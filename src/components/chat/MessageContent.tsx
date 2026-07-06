@@ -16,7 +16,9 @@ import {
   Bot,
   Loader2,
   ArrowRight,
+  Activity,
 } from "lucide-react";
+import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import { Markdown } from "@/components/markdown/Markdown";
 import { ReasoningBlock } from "./ReasoningBlock";
@@ -28,10 +30,29 @@ interface MessageContentProps {
   message: ChatMessage;
   /** 跳转 sub-agent 的回调；不传则 marker 不渲染按钮（兜底提示）。 */
   onOpenSubAgent?: (subMessageId: string) => void;
+  /**
+   * 空 streaming 时显示的兜底 affordance：
+   *   - "main"（默认）   → 三点跳动（主流程轻量）
+   *   - "sub-agent"      → "正在等待 sub-agent 输出…" 副文案 + 呼吸图标
+   *                       （侧栏需要更显眼的提示）
+   */
+  loadingHint?: "main" | "sub-agent";
 }
 
-export function MessageContent({ message, onOpenSubAgent }: MessageContentProps) {
+export function MessageContent({
+  message,
+  onOpenSubAgent,
+  loadingHint = "main",
+}: MessageContentProps) {
   if (message.parts.length === 0 && message.status === "streaming") {
+    if (loadingHint === "sub-agent") {
+      return (
+        <div className="flex items-center gap-1.5 py-4 font-mono text-[11px] text-muted-foreground/70">
+          <Activity className="h-3 w-3 animate-pulse text-accent" />
+          <span>正在等待 sub-agent 输出…</span>
+        </div>
+      );
+    }
     return (
       <div className="flex items-center gap-1.5 text-muted-foreground py-1">
         <span className="h-1.5 w-1.5 rounded-full bg-current animate-pulse-dot" />
@@ -202,6 +223,17 @@ function SubMessageMarkerChip({
     return findInTree(list, part.subMessageId);
   });
 
+  // loading → "unavailable" 超时。3s 后 sub 仍找不到，视为 orphan marker
+  // (例如 history 丢了 sub-message / 跳号 / event 缺失)，UI 不再让用户以为
+  // 它还在跑。`sub` 找到时立即重置回 loading 状态。
+  const [unavailable, setUnavailable] = useState(false);
+  useEffect(() => {
+    if (sub || !onOpenSubAgent) return;
+    setUnavailable(false);
+    const t = setTimeout(() => setUnavailable(true), 3000);
+    return () => clearTimeout(t);
+  }, [sub, onOpenSubAgent]);
+
   if (!onOpenSubAgent) {
     // 兜底：没有回调时只显示摘要，不能交互
     return (
@@ -216,7 +248,11 @@ function SubMessageMarkerChip({
     return (
       <div className="my-1 inline-flex items-center gap-1 rounded-md border border-dashed border-border/60 bg-muted/30 px-2 py-0.5 font-mono text-[10px] text-muted-foreground/60">
         <Bot className="h-2.5 w-2.5" />
-        <span>sub-agent (loading…)</span>
+        <span>
+          {unavailable
+            ? "sub-agent (unavailable)"
+            : "sub-agent (loading…)"}
+        </span>
       </div>
     );
   }
