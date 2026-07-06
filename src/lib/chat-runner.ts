@@ -5,27 +5,40 @@
  * - 每个 ChatRunner 实例对应一次"run"（不是整个 session）
  * - 持有 AbortController 用于取消
  * - 把 event 派发到 reducer，更新 messages[] 中的目标 message
+ *
+ * **Sub-agent 支持**（team / multi-agent 场景）：
+ * - 同一条 SSE 流里可能夹杂 team 自己的事件和它委派给 member agent 的事件
+ * - 通过 `data.parent_run_id` 区分：parent_run_id 等于 top run_id 的事件属于 sub-agent
+ * - 每个 sub-agent 产生的事件归约到一个独立的 `ChatMessage`，挂到 top message 的
+ *   `subMessages[]` 下，从而实现"父回应 + 子 agent 各自独立展示"。
  */
 
 import { AgnoClient } from "./agno-client";
 import type { AgRunResponse, AgToolCall } from "./agno-types";
+import { displayNameForRun } from "./agent-name";
 import {
   type ChatMessage,
-  type MessagePart,
   type ToolCallPart,
-  type ToolCallStatus,
   generateIdPlaceholder,
 } from "./message-types-helpers";
 import { parseSSEData } from "./sse-parser";
+
+/** 流式 event 之间的最长静默间隔。超过即视为 hang。 */
+const STREAM_NO_EVENT_TIMEOUT_MS = 5 * 60 * 1000;
 import { safeJsonParse } from "./utils";
 
 export interface ChatRunnerCallbacks {
+  /** 更新一条消息（top 或 sub 都通过它出去；store 通过 message.parentMessageId 决定落到哪里）。 */
   onMessageUpdate: (message: ChatMessage) => void;
   onRunStarted?: (runId: string, sessionId?: string) => void;
   onRunCompleted?: (runId: string, message: ChatMessage) => void;
   onRunError?: (runId: string, error: string) => void;
   onRunPaused?: (runId: string, info: ChatMessage["pauseInfo"]) => void;
   onChunk?: (text: string) => void;
+  /** 一个新的 sub-agent message 被创建（用于在 store 里预先占位等）。 */
+  onSubMessageCreated?: (parentMessageId: string, sub: ChatMessage) => void;
+  /** sub 消息的最终化（completed/error/cancelled），用于聚合状态。 */
+  onSubMessageFinalized?: (parentMessageId: string, sub: ChatMessage) => void;
 }
 
 export interface RunAgentParams {
@@ -41,17 +54,20 @@ export interface RunAgentParams {
 
 export class ChatRunner {
   private abortController: AbortController | null = null;
-  private currentRunId: string | null = null;
+  /** 顶层 run 的 run_id（team 自己的 run，或普通 agent 的 run）。 */
+  private topRunId: string | null = null;
   private currentSessionId: string | null = null;
-  private currentMessage: ChatMessage | null = null;
-  private currentAgentId: string | null = null;
+  /** 顶层 assistant message（team/agent 自己的回应）。 */
+  private topMessage: ChatMessage | null = null;
+  /** 所有 sub-agent 消息，按 run_id 索引。 */
+  private subMessages = new Map<string, ChatMessage>();
 
   isRunning() {
     return this.abortController !== null;
   }
 
   getCurrentRunId() {
-    return this.currentRunId;
+    return this.topRunId;
   }
 
   getCurrentSessionId() {
@@ -59,37 +75,45 @@ export class ChatRunner {
   }
 
   getCurrentMessage() {
-    return this.currentMessage;
+    return this.topMessage;
+  }
+
+  /** 返回当前所有消息（top + subs），用于调试或聚合。 */
+  getAllMessages(): ChatMessage[] {
+    const out: ChatMessage[] = [];
+    if (this.topMessage) out.push(this.topMessage);
+    for (const sub of this.subMessages.values()) out.push(sub);
+    return out;
   }
 
   abort() {
+    // 设置 abort signal；store 端的 cancelRun 会同时把对应消息标记为
+    // cancelled/paused（chat-store.ts 的 cancelRun → updateAnyMessage），
+    // 不需要再在 runner 本地重复做这件事——本地 mutation 不会被任何
+    // callback 推到 store，纯粹是 dead code。
     this.abortController?.abort();
     this.abortController = null;
-    if (this.currentMessage) {
-      this.currentMessage = {
-        ...this.currentMessage,
-        status: this.currentMessage.parts.some((p) => p.type === "tool_call" && p.status === "calling")
-          ? "paused"
-          : "cancelled",
-      };
-    }
   }
 
-  async run(params: RunAgentParams, callbacks: ChatRunnerCallbacks): Promise<void> {
+  async run(
+    params: RunAgentParams,
+    callbacks: ChatRunnerCallbacks
+  ): Promise<void> {
     this.abortController = new AbortController();
-    this.currentAgentId = params.agentId;
 
     const existing = params.existingAssistantMessage;
-    this.currentMessage = existing ?? {
-      id: generateIdPlaceholder(),
-      role: "assistant",
-      parts: [],
-      status: "streaming",
-      createdAt: Date.now(),
-      agentId: params.agentId,
-    };
-    if (params.sessionId) this.currentMessage.sessionId = params.sessionId;
-    callbacks.onMessageUpdate(this.currentMessage);
+    this.topMessage = existing
+      ? { ...existing, status: "streaming" }
+      : {
+          id: generateIdPlaceholder(),
+          role: "assistant",
+          parts: [],
+          status: "streaming",
+          createdAt: Date.now(),
+          agentId: params.agentId,
+        };
+    if (params.sessionId) this.topMessage.sessionId = params.sessionId;
+    callbacks.onMessageUpdate(this.topMessage);
 
     try {
       const stream = params.client.runAgent(
@@ -104,60 +128,73 @@ export class ChatRunner {
         this.abortController.signal
       );
 
-      for await (const event of stream) {
-        if (this.abortController.signal.aborted) break;
-        const data = parseSSEData<AgRunResponse>(event);
-        if (!data) continue;
+      // 5 分钟没有任何 event 进来 → 视为 hang（broker 静默断连 / RST / TCP 超时
+      // 没回 FIN）。abortController.abort() 会让 for-await 跳出，然后 catch
+      // 走 abort 早返回分支——不会走到 error 分支污染 topMessage。
+      //
+      // 注：长 LLM 调用（5min+）理论上会被误伤。AGNO 的 max task duration 配置
+      // 是这种 timeout 的合适锚点；目前取保守值。如果后续发现误伤多，挪到
+      // settings store 里作为用户配置。
+      let noEventTimeout: ReturnType<typeof setTimeout> | null = null;
+      const resetNoEventTimeout = () => {
+        if (noEventTimeout) clearTimeout(noEventTimeout);
+        noEventTimeout = setTimeout(() => {
+          console.warn(
+            "ChatRunner: no SSE event in 5 min; aborting run as hung",
+            { runId: this.topRunId }
+          );
+          this.abortController?.abort();
+        }, STREAM_NO_EVENT_TIMEOUT_MS);
+      };
+      resetNoEventTimeout();
 
-        // 跟踪 run_id / session_id
-        if (data.run_id && !this.currentRunId) {
-          this.currentRunId = data.run_id;
-          this.currentMessage.runId = data.run_id;
-          if (data.session_id) {
-            this.currentSessionId = data.session_id;
-            this.currentMessage.sessionId = data.session_id;
-          }
-          callbacks.onRunStarted?.(data.run_id, data.session_id);
-        } else if (data.session_id && !this.currentSessionId) {
-          this.currentSessionId = data.session_id;
-          this.currentMessage.sessionId = data.session_id;
+      try {
+        for await (const event of stream) {
+          if (this.abortController.signal.aborted) break;
+          const data = parseSSEData<AgRunResponse>(event);
+          if (!data) continue;
+
+          resetNoEventTimeout();
+          this.routeEvent(data, callbacks);
         }
-
-        this.applyEvent(data, callbacks);
-
-        if (this.currentMessage) {
-          callbacks.onMessageUpdate(this.currentMessage);
-        }
+      } finally {
+        if (noEventTimeout) clearTimeout(noEventTimeout);
       }
 
-      if (this.currentMessage) {
-        const finalStatus = this.currentMessage.status;
-        if (finalStatus === "streaming") {
-          this.currentMessage.status =
-            this.currentMessage.parts.length === 0 ? "completed" : "completed";
+      if (this.topMessage) {
+        if (this.topMessage.status === "streaming") {
+          this.topMessage.status = "completed";
         }
-        callbacks.onMessageUpdate(this.currentMessage);
-        callbacks.onRunCompleted?.(this.currentRunId ?? "", this.currentMessage);
+        callbacks.onMessageUpdate(this.topMessage);
+        callbacks.onRunCompleted?.(
+          this.topRunId ?? "",
+          this.topMessage
+        );
       }
     } catch (err) {
       if (this.abortController.signal.aborted) {
-        // 主动取消
+        // 主动取消 — 已 markAllCancelled
         return;
       }
       const msg = err instanceof Error ? err.message : String(err);
-      if (this.currentMessage) {
-        this.currentMessage = {
-          ...this.currentMessage,
-          status: "error",
-          error: msg,
-          parts: [
-            ...this.currentMessage.parts,
-            { type: "error", message: msg },
-          ],
-        };
-        callbacks.onMessageUpdate(this.currentMessage);
+      if (this.topMessage) {
+        this.topMessage.status = "error";
+        this.topMessage.error = msg;
+        this.topMessage.parts.push({ type: "error", message: msg });
+        callbacks.onMessageUpdate(this.topMessage);
       }
-      callbacks.onRunError?.(this.currentRunId ?? "", msg);
+      // sub-agent 错误：把 error part 也写到还在 streaming 的 sub 消息上，
+      // 侧栏面板才能看到 "sub-agent 失败在这里" 而不是永远显示
+      // loading dots。sub 自身已经走 onMessageUpdate；这里只需要更新状态。
+      for (const sub of this.subMessages.values()) {
+        if (sub.status === "streaming" || sub.status === "paused") {
+          sub.status = "error";
+          sub.error = msg;
+          sub.parts.push({ type: "error", message: msg });
+          callbacks.onMessageUpdate(sub);
+        }
+      }
+      callbacks.onRunError?.(this.topRunId ?? "", msg);
     } finally {
       this.abortController = null;
     }
@@ -178,14 +215,13 @@ export class ChatRunner {
     callbacks: ChatRunnerCallbacks
   ): Promise<void> {
     this.abortController = new AbortController();
-    this.currentAgentId = params.agentId;
-    this.currentRunId = params.runId;
+    this.topRunId = params.runId;
     this.currentSessionId = params.sessionId ?? null;
 
-    if (this.currentMessage) {
-      this.currentMessage.status = "streaming";
-      this.currentMessage.awaitingInput = false;
-      callbacks.onMessageUpdate(this.currentMessage);
+    if (this.topMessage) {
+      this.topMessage.status = "streaming";
+      this.topMessage.awaitingInput = false;
+      callbacks.onMessageUpdate(this.topMessage);
     }
 
     try {
@@ -205,29 +241,22 @@ export class ChatRunner {
         if (this.abortController.signal.aborted) break;
         const data = parseSSEData<AgRunResponse>(event);
         if (!data) continue;
-        this.applyEvent(data, callbacks);
-        if (this.currentMessage) callbacks.onMessageUpdate(this.currentMessage);
+        this.routeEvent(data, callbacks);
       }
 
-      if (this.currentMessage) {
-        this.currentMessage.status = "completed";
-        callbacks.onMessageUpdate(this.currentMessage);
-        callbacks.onRunCompleted?.(params.runId, this.currentMessage);
+      if (this.topMessage) {
+        this.topMessage.status = "completed";
+        callbacks.onMessageUpdate(this.topMessage);
+        callbacks.onRunCompleted?.(params.runId, this.topMessage);
       }
     } catch (err) {
       if (this.abortController.signal.aborted) return;
       const msg = err instanceof Error ? err.message : String(err);
-      if (this.currentMessage) {
-        this.currentMessage = {
-          ...this.currentMessage,
-          status: "error",
-          error: msg,
-          parts: [
-            ...this.currentMessage.parts,
-            { type: "error", message: msg },
-          ],
-        };
-        callbacks.onMessageUpdate(this.currentMessage);
+      if (this.topMessage) {
+        this.topMessage.status = "error";
+        this.topMessage.error = msg;
+        this.topMessage.parts.push({ type: "error", message: msg });
+        callbacks.onMessageUpdate(this.topMessage);
       }
       callbacks.onRunError?.(params.runId, msg);
     } finally {
@@ -236,23 +265,195 @@ export class ChatRunner {
   }
 
   /**
-   * 把单个 SSE event 归约到 currentMessage 上
+   * 路由一个 SSE event 到正确的 message（top 或 sub）。
    */
-  private applyEvent(data: AgRunResponse, callbacks: ChatRunnerCallbacks) {
-    if (!this.currentMessage) return;
-    const parts = this.currentMessage.parts;
+  private routeEvent(data: AgRunResponse, callbacks: ChatRunnerCallbacks) {
+    const runId = data.run_id ?? this.topRunId;
+    const parentRunId = data.parent_run_id ?? null;
+
+    // 1) 首个事件确立 top run — 仅当它是顶层事件（没有 parent_run_id）时才认定。
+    // 之前会把"任意第一个 event"当成 top，导致 sub-agent 的事件先到时被错认为 top，
+    // 后续真正的 outer 事件全部路由进错的 message 树。
+    if (
+      !this.topRunId &&
+      runId &&
+      (parentRunId === null || parentRunId === undefined)
+    ) {
+      this.topRunId = runId;
+      if (this.topMessage) {
+        this.topMessage.runId = runId;
+        if (data.session_id && !this.currentSessionId) {
+          this.currentSessionId = data.session_id;
+          this.topMessage.sessionId = data.session_id;
+        }
+      }
+      callbacks.onRunStarted?.(runId, data.session_id);
+    } else if (data.session_id && !this.currentSessionId) {
+      this.currentSessionId = data.session_id;
+      if (this.topMessage) this.topMessage.sessionId = data.session_id;
+    }
+
+    // 2) 决定 target message
+    const target = this.resolveTarget(runId, parentRunId, data, callbacks);
+    if (!target) return;
+
+    // 3) 应用事件
+    const prevStatus = target.status;
+    const isSub = target !== this.topMessage;
+    this.applyEvent(target, data, callbacks);
+
+    // 4) 通知
+    callbacks.onMessageUpdate(target);
+    if (isSub && prevStatus === "streaming" && target.status !== "streaming") {
+      callbacks.onSubMessageFinalized?.(
+        target.parentMessageId ?? "",
+        target
+      );
+    }
+  }
+
+  /**
+   * 找到或创建事件对应的 ChatMessage。
+   * - run_id 为 topRunId 或没有 parent_run_id → 顶层 message
+   * - parent_run_id == topRunId（或中间 node） → sub-message，按需创建
+   */
+  private resolveTarget(
+    runId: string | null,
+    parentRunId: string | null,
+    data: AgRunResponse,
+    callbacks: ChatRunnerCallbacks
+  ): ChatMessage | null {
+    // Case A: 没有 runId（极少见，可能老版本）→ top
+    if (!runId) return this.topMessage;
+
+    // Case B: 没有 parent_run_id 或就是 top run → top message
+    if (!parentRunId || runId === this.topRunId) {
+      return this.topMessage;
+    }
+
+    // Case C: 已存在的 sub-message
+    const existing = this.subMessages.get(runId);
+    if (existing) return existing;
+
+    // Case D: 新 sub-message（parent 必须是 topRunId 或者某个已知的 sub）
+    const parent =
+      parentRunId === this.topRunId
+        ? this.topMessage
+        : this.subMessages.get(parentRunId);
+    if (!parent) {
+      // parent 还没创建；这种情况是 AGNO 给的顺序有点不对劲，但保险起见：
+      // 把它当成 top 的子（少数情况会丢掉嵌套层级，但至少不会消失）。
+      const sub: ChatMessage = {
+        id: generateIdPlaceholder(),
+        role: "assistant",
+        parts: [],
+        status: "streaming",
+        createdAt: Date.now(),
+        runId,
+        agentId: data.agent_id ?? undefined,
+        teamId: data.team_id ?? undefined,
+        parentMessageId: this.topMessage?.id ?? "",
+        displayName: this.extractDisplayName(data),
+      };
+      this.subMessages.set(runId, sub);
+      if (this.topMessage) {
+        this.topMessage = {
+          ...this.topMessage,
+          subMessages: [...(this.topMessage.subMessages ?? []), sub],
+        };
+        // 也在 top.parts 末尾注入一个 marker，让 chip 出现在"team 内容流"的当前位置
+        this.injectSubMarker(this.topMessage, sub);
+        callbacks.onMessageUpdate(this.topMessage);
+      }
+      callbacks.onSubMessageCreated?.(this.topMessage?.id ?? "", sub);
+      return sub;
+    }
+
+    // 正常路径：parent 已存在，创建 sub 挂上去
+    const sub: ChatMessage = {
+      id: generateIdPlaceholder(),
+      role: "assistant",
+      parts: [],
+      status: "streaming",
+      createdAt: Date.now(),
+      runId,
+      agentId: data.agent_id ?? undefined,
+      teamId: data.team_id ?? undefined,
+      parentMessageId: parent.id,
+      displayName: this.extractDisplayName(data),
+    };
+    this.subMessages.set(runId, sub);
+
+    parent.subMessages = [...(parent.subMessages ?? []), sub];
+
+    // 把 marker 注入 parent 的 parts[] 末尾（"team 流到此处委派给 sub"）
+    this.injectSubMarker(parent, sub);
+
+    callbacks.onMessageUpdate(parent);
+    callbacks.onSubMessageCreated?.(parent.id, sub);
+    return sub;
+  }
+
+  /**
+   * 把一个 sub_message_marker part 追加到指定父 message 的 parts[] 末尾。
+   * 这样 chip 会出现在"team 自己的内容流"里 sub 启动的那一刻。
+   */
+  private injectSubMarker(parent: ChatMessage, sub: ChatMessage) {
+    // 仅最外层注入 marker；嵌套 sub-of-sub 的渲染交给侧边栏内部
+    if (parent !== this.topMessage) return;
+    parent.parts.push({
+      type: "sub_message_marker",
+      subMessageId: sub.id,
+    });
+  }
+
+  /**
+   * 把单个 SSE event 归约到指定 target message 上
+   *
+   * 重要契约（修改前请先读这个）：
+   *
+   *   1. **就地变更**。`target.parts` / `target.status` / `target.parts[i].args` /
+   *      `target.parts[i].result` 等都通过 \`push\` / 索引赋值原地变更。
+   *      切勿在 applyEvent 内部 \`return { ...target, parts: [...] }\` 之类的
+   *      immutable 创建——下游 callback 直接把这个 target 传出去，store
+   *      端是直接 mutate 看到的。
+   *
+   *   2. **callback 触发**。applyEvent 自己**不调** callbacks.onMessageUpdate；
+   *      调用方（routeEvent / for-await）负责在一次 applyEvent 之后调一次
+   *      onMessageUpdate(target)，把变更推到 chat-store 的 updateAnyMessage。
+   *      store 端在 updateAnyMessage 用 round 5 #1 的 replaceInTree 浅克隆一次，
+   *      强制新 ref，bust Object.is 检查，让 React 重新渲染。
+   *
+   *   3. **target 是 top OR sub**。不假设它是谁——routeEvent 通过 resolveTarget
+   *      决定。applyEvent 自身对 topMessage / subMessages 一视同仁。
+   *
+   * 未来如果有人要重构 applyEvent 走 immutable，先在
+   * ChatRunner 与 chat-store 之间加一个"返回新 ChatMessage + 调 callback"
+   * 的中间层；不要直接在这里 break 契约。
+   */
+  private applyEvent(
+    target: ChatMessage,
+    data: AgRunResponse,
+    callbacks: ChatRunnerCallbacks
+  ) {
     const eventName = data.event ?? data.status ?? "";
 
     switch (eventName) {
-      case "RunStarted":
+      case "RunStarted": {
+        if (data.agent_id) target.agentId = data.agent_id;
+        if (data.team_id) target.teamId = data.team_id;
+        const nm = this.extractDisplayName(data);
+        if (nm) target.displayName = nm;
+        break;
+      }
+
       case "RunContent":
       case "RunContentDelta": {
-        // 文本增量
         const delta =
           data.delta ??
           (typeof data.content === "string" ? data.content : null);
         if (delta != null) {
-          this.appendText(delta, callbacks);
+          this.appendText(target, delta, callbacks);
         }
         break;
       }
@@ -261,7 +462,10 @@ export class ChatRunner {
       case "ReasoningContentDelta": {
         const reasoning = data.reasoning ?? data.delta ?? data.reasoning_content;
         if (reasoning != null) {
-          this.appendReasoning(typeof reasoning === "string" ? reasoning : JSON.stringify(reasoning));
+          this.appendReasoning(
+            target,
+            typeof reasoning === "string" ? reasoning : JSON.stringify(reasoning)
+          );
         }
         break;
       }
@@ -269,32 +473,39 @@ export class ChatRunner {
       case "ReasoningStep":
       case "ReasoningStepDelta": {
         const step = data.reasoning_step;
-        if (step) this.appendReasoningStep(step);
+        if (step) this.appendReasoningStep(target, step);
         break;
       }
 
       case "ToolCallStarted": {
         const tc = data.tool;
-        if (tc) this.startToolCall(tc);
+        if (tc) this.startToolCall(target, tc);
         break;
       }
 
       case "ToolCallCompleted":
       case "ToolCallResult": {
         const tc = data.tool;
-        if (tc) this.completeToolCall(tc, data.tool_result);
+        if (tc) this.completeToolCall(target, tc, data.tool_result);
         break;
       }
 
       case "ToolCallError": {
         const tc = data.tool;
-        if (tc) this.errorToolCall(tc, data.tool_result ?? data.error ?? "tool error");
+        if (tc)
+          this.errorToolCall(
+            target,
+            tc,
+            (data.tool_result as string | undefined) ??
+              data.error ??
+              "tool error"
+          );
         break;
       }
 
       case "RunReferences": {
         if (data.references?.length || data.citations?.length) {
-          this.appendReferences([
+          this.appendReferences(target, [
             ...(data.references ?? []),
             ...(data.citations ?? []),
           ]);
@@ -303,20 +514,19 @@ export class ChatRunner {
       }
 
       case "RunPaused": {
-        // 解析待执行的 tool calls
-        const pauseInfo = this.collectPauseInfo(data);
+        const pauseInfo = this.collectPauseInfo(target, data);
         if (pauseInfo) {
-          this.currentMessage.awaitingInput = true;
-          this.currentMessage.status = "paused";
-          this.currentMessage.pauseInfo = pauseInfo;
+          target.awaitingInput = true;
+          target.status = "paused";
+          target.pauseInfo = pauseInfo;
           callbacks.onRunPaused?.(data.run_id ?? "", pauseInfo);
         }
         break;
       }
 
       case "RunCompleted": {
-        if (data.metrics) this.currentMessage.metrics = data.metrics;
-        this.currentMessage.status = "completed";
+        if (data.metrics) target.metrics = data.metrics;
+        if (target.status !== "paused") target.status = "completed";
         break;
       }
 
@@ -324,11 +534,11 @@ export class ChatRunner {
       case "RunCancelled": {
         if (eventName === "RunError") {
           const msg = data.error ?? data.content ?? "Agent run failed";
-          this.currentMessage.status = "error";
-          this.currentMessage.error = String(msg);
-          parts.push({ type: "error", message: String(msg) });
+          target.status = "error";
+          target.error = String(msg);
+          target.parts.push({ type: "error", message: String(msg) });
         } else {
-          this.currentMessage.status = "cancelled";
+          if (target.status !== "paused") target.status = "cancelled";
         }
         break;
       }
@@ -336,25 +546,31 @@ export class ChatRunner {
       default: {
         // 兜底：尝试提取 content/reasoning_content/delta
         if (typeof data.delta === "string") {
-          this.appendText(data.delta, callbacks);
+          this.appendText(target, data.delta, callbacks);
         } else if (typeof data.content === "string" && data.content) {
-          // 兼容：有些实现一次性推送完整 content
-          this.appendText(data.content, callbacks);
+          this.appendText(target, data.content, callbacks);
         } else if (typeof data.reasoning === "string") {
-          this.appendReasoning(data.reasoning);
+          this.appendReasoning(target, data.reasoning);
         } else if (data.tool) {
-          // 有些实现只发 tool 事件，没有 ToolCallStarted
-          const toolId = (data.tool as any).tool_call_id ?? (data.tool as any).id;
-          if (!this.findToolCall(toolId)) this.startToolCall(data.tool);
-          else this.completeToolCall(data.tool, data.tool_result);
+          const toolId = data.tool.tool_call_id ?? data.tool.id;
+          if (!this.findToolCall(target, toolId))
+            this.startToolCall(target, data.tool);
+          else this.completeToolCall(target, data.tool, data.tool_result);
         }
       }
     }
   }
 
-  private appendText(delta: string, callbacks: ChatRunnerCallbacks) {
-    if (!this.currentMessage) return;
-    const parts = this.currentMessage.parts;
+  private extractDisplayName(data: AgRunResponse): string | undefined {
+    return displayNameForRun(data);
+  }
+
+  private appendText(
+    target: ChatMessage,
+    delta: string,
+    callbacks: ChatRunnerCallbacks
+  ) {
+    const parts = target.parts;
     const last = parts[parts.length - 1];
     if (last && last.type === "text") {
       parts[parts.length - 1] = { type: "text", text: last.text + delta };
@@ -364,9 +580,8 @@ export class ChatRunner {
     callbacks.onChunk?.(delta);
   }
 
-  private appendReasoning(text: string) {
-    if (!this.currentMessage) return;
-    const parts = this.currentMessage.parts;
+  private appendReasoning(target: ChatMessage, text: string) {
+    const parts = target.parts;
     const last = parts[parts.length - 1];
     if (last && last.type === "reasoning") {
       parts[parts.length - 1] = {
@@ -379,9 +594,11 @@ export class ChatRunner {
     }
   }
 
-  private appendReasoningStep(step: { title?: string; reasoning?: string; action?: string; result?: string }) {
-    if (!this.currentMessage) return;
-    const parts = this.currentMessage.parts;
+  private appendReasoningStep(
+    target: ChatMessage,
+    step: { title?: string; reasoning?: string; action?: string; result?: string }
+  ) {
+    const parts = target.parts;
     const last = parts[parts.length - 1];
     if (last && last.type === "reasoning") {
       parts[parts.length - 1] = {
@@ -394,18 +611,17 @@ export class ChatRunner {
     }
   }
 
-  private findToolCall(id: string): ToolCallPart | undefined {
-    if (!this.currentMessage) return undefined;
-    for (const p of this.currentMessage.parts) {
+  private findToolCall(target: ChatMessage, id: string): ToolCallPart | undefined {
+    for (const p of target.parts) {
       if (p.type === "tool_call" && p.toolCallId === id) return p;
     }
     return undefined;
   }
 
-  private startToolCall(tc: AgToolCall) {
-    if (!this.currentMessage || !tc) return;
+  private startToolCall(target: ChatMessage, tc: AgToolCall) {
+    if (!tc) return;
     const args = this.extractToolArgs(tc);
-    this.currentMessage.parts.push({
+    target.parts.push({
       type: "tool_call",
       toolCallId: tc.tool_call_id ?? tc.id ?? `tc-${Date.now()}-${Math.random()}`,
       toolName: this.extractToolName(tc),
@@ -415,25 +631,33 @@ export class ChatRunner {
     });
   }
 
-  private completeToolCall(tc: AgToolCall, result?: string): void {
-    if (!this.currentMessage || !tc) return;
+  private completeToolCall(
+    target: ChatMessage,
+    tc: AgToolCall,
+    result?: string
+  ): void {
+    if (!tc) return;
     const targetId = tc.tool_call_id ?? tc.id;
-    let idx = this.currentMessage.parts.findIndex(
+    let idx = target.parts.findIndex(
       (p) => p.type === "tool_call" && p.toolCallId === targetId
     );
     if (idx === -1) {
-      this.startToolCall(tc);
-      idx = this.currentMessage.parts.findIndex(
+      this.startToolCall(target, tc);
+      idx = target.parts.findIndex(
         (p) => p.type === "tool_call" && p.toolCallId === targetId
       );
       if (idx === -1) return;
     }
-    this.applyCompleteToolCall(idx, tc, result);
+    this.applyCompleteToolCall(target, idx, tc, result);
   }
 
-  private applyCompleteToolCall(idx: number, tc: AgToolCall, result?: string): void {
-    if (!this.currentMessage) return;
-    const existing = this.currentMessage.parts[idx] as ToolCallPart;
+  private applyCompleteToolCall(
+    target: ChatMessage,
+    idx: number,
+    tc: AgToolCall,
+    result?: string
+  ): void {
+    const existing = target.parts[idx] as ToolCallPart;
 
     let resultValue: any = existing.result;
     const fromArgs = this.extractToolResult(tc);
@@ -443,13 +667,18 @@ export class ChatRunner {
       resultValue = safeJsonParse(result, result);
     }
 
-    const metrics = (tc as any).metrics;
-    this.currentMessage.parts[idx] = {
+    const metrics = tc.metrics;
+    target.parts[idx] = {
       ...existing,
-      toolName: existing.toolName === "tool" ? this.extractToolName(tc) : existing.toolName,
+      toolName:
+        existing.toolName === "tool"
+          ? this.extractToolName(tc)
+          : existing.toolName,
       result: resultValue,
-      status: (tc as any).tool_call_error ? "error" : "completed",
-      error: (tc as any).tool_call_error ? String(resultValue ?? "tool error") : undefined,
+      status: tc.tool_call_error ? "error" : "completed",
+      error: tc.tool_call_error
+        ? String(resultValue ?? "tool error")
+        : undefined,
       metrics,
       endedAt: Date.now(),
       durationMs:
@@ -459,21 +688,21 @@ export class ChatRunner {
     };
   }
 
-  private errorToolCall(tc: AgToolCall, error: string): void {
-    if (!this.currentMessage || !tc) return;
+  private errorToolCall(target: ChatMessage, tc: AgToolCall, error: string): void {
+    if (!tc) return;
     const targetId = tc.tool_call_id ?? tc.id;
-    let idx = this.currentMessage.parts.findIndex(
+    let idx = target.parts.findIndex(
       (p) => p.type === "tool_call" && p.toolCallId === targetId
     );
     if (idx === -1) {
-      this.startToolCall(tc);
-      idx = this.currentMessage.parts.findIndex(
+      this.startToolCall(target, tc);
+      idx = target.parts.findIndex(
         (p) => p.type === "tool_call" && p.toolCallId === targetId
       );
       if (idx === -1) return;
     }
-    const existing = this.currentMessage.parts[idx] as ToolCallPart;
-    this.currentMessage.parts[idx] = {
+    const existing = target.parts[idx] as ToolCallPart;
+    target.parts[idx] = {
       ...existing,
       error,
       status: "error",
@@ -522,9 +751,8 @@ export class ChatRunner {
     return null;
   }
 
-  private appendReferences(refs: any[]) {
-    if (!this.currentMessage) return;
-    this.currentMessage.parts.push({
+  private appendReferences(target: ChatMessage, refs: any[]) {
+    target.parts.push({
       type: "reference",
       references: refs.map((r) => ({
         title: r.title,
@@ -536,10 +764,13 @@ export class ChatRunner {
     });
   }
 
-  private collectPauseInfo(data: AgRunResponse): ChatMessage["pauseInfo"] | null {
-    if (!this.currentMessage || !data.run_id) return null;
+  private collectPauseInfo(
+    target: ChatMessage,
+    data: AgRunResponse
+  ): ChatMessage["pauseInfo"] | null {
+    if (!data.run_id) return null;
     const toolCalls: any[] = [];
-    for (const p of this.currentMessage.parts) {
+    for (const p of target.parts) {
       if (p.type === "tool_call" && p.status === "calling") {
         toolCalls.push({
           tool_call_id: p.toolCallId,
