@@ -3,6 +3,11 @@ import {
   User,
   Copy,
   Check,
+  ChevronDown,
+  ChevronRight,
+  Bot,
+  Loader2,
+  Activity,
 } from "lucide-react";
 import { useState } from "react";
 import { cn, copyToClipboard, formatRelativeTime } from "@/lib/utils";
@@ -31,9 +36,7 @@ export function MessageBubble({ message, onCopy }: Props) {
   }
 
   // assistant：完全平铺，无 avatar/名字
-  return (
-    <AssistantMessage message={message} onCopy={onCopy} />
-  );
+  return <AssistantMessage message={message} onCopy={onCopy} />;
 }
 
 function UserMessage({ message, onCopy }: Props) {
@@ -93,6 +96,7 @@ function AssistantMessage({ message, onCopy }: Props) {
   const hasParts = message.parts.length > 0;
   const hasText = message.parts.some((p) => p.type === "text");
   const isStreaming = message.status === "streaming";
+  const subMessages = message.subMessages ?? [];
 
   const text = message.parts
     .map((p) => (p.type === "text" ? p.text : ""))
@@ -116,9 +120,16 @@ function AssistantMessage({ message, onCopy }: Props) {
       )}
     >
       <div className="mx-auto max-w-3xl">
-        {/* 没有 avatar / 名字 / agent tag —— 纯平铺 */}
-
         <MessageContent message={message} />
+
+        {/* sub-agents (team / multi-agent) */}
+        {subMessages.length > 0 && (
+          <div className="mt-3 space-y-1.5">
+            {subMessages.map((sub) => (
+              <SubMessageBubble key={sub.id} subMessage={sub} />
+            ))}
+          </div>
+        )}
 
         {/* footer: 状态 + 指标 + copy */}
         {(isStreaming ||
@@ -138,6 +149,124 @@ function AssistantMessage({ message, onCopy }: Props) {
   );
 }
 
+/* ---------------------------------------------------------------- */
+/* Sub-agent message block (team member / delegated agent)          */
+/* ---------------------------------------------------------------- */
+
+function SubMessageBubble({ subMessage }: { subMessage: ChatMessage }) {
+  const [open, setOpen] = useState(true);
+  const name =
+    subMessage.displayName ?? subMessage.agentId ?? "sub-agent";
+  const isStreaming = subMessage.status === "streaming";
+  const isCompleted = subMessage.status === "completed";
+  const isError = subMessage.status === "error";
+  const isCancelled = subMessage.status === "cancelled";
+
+  const statusLabel = isStreaming
+    ? "running"
+    : isCompleted
+    ? "done"
+    : isError
+    ? "failed"
+    : isCancelled
+    ? "cancelled"
+    : subMessage.status;
+
+  const toolCount = subMessage.parts.filter(
+    (p) => p.type === "tool_call"
+  ).length;
+  const hasReasoning = subMessage.parts.some((p) => p.type === "reasoning");
+  const hasText = subMessage.parts.some((p) => p.type === "text");
+  const isEmpty = subMessage.parts.length === 0;
+
+  return (
+    <div
+      className={cn(
+        "rounded-md border bg-muted/20",
+        isStreaming
+          ? "border-accent/40 bg-accent/[0.04]"
+          : "border-border/60"
+      )}
+    >
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors hover:bg-muted/40"
+      >
+        {open ? (
+          <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
+        ) : (
+          <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground" />
+        )}
+        <div className="flex h-4 w-4 shrink-0 items-center justify-center rounded bg-accent/15 ring-1 ring-accent/30">
+          <Bot className="h-2.5 w-2.5 text-accent" />
+        </div>
+        <span className="font-mono text-[11px] font-medium text-foreground/90">
+          {name}
+        </span>
+        <span className="font-mono text-[10px] text-muted-foreground/60">
+          · sub-agent
+        </span>
+        {toolCount > 0 && (
+          <span className="font-mono text-[10px] text-muted-foreground/60">
+            · {toolCount} tool{toolCount === 1 ? "" : "s"}
+          </span>
+        )}
+        {isStreaming && (
+          <span className="ml-auto flex items-center gap-1 font-mono text-[10px] text-accent">
+            <Loader2 className="h-2.5 w-2.5 animate-spin" />
+            running
+          </span>
+        )}
+        {!isStreaming && (
+          <span
+            className={cn(
+              "ml-auto font-mono text-[10px]",
+              isCompleted
+                ? "text-success/70"
+                : isError
+                ? "text-destructive"
+                : isCancelled
+                ? "text-warning"
+                : "text-muted-foreground/60"
+            )}
+          >
+            {statusLabel}
+            {hasText && isCompleted ? " · 文本" : ""}
+            {hasReasoning && isCompleted ? " · 推理" : ""}
+          </span>
+        )}
+      </button>
+
+      {open && (
+        <div className="border-t border-border/40 bg-background/30 px-3 py-2.5">
+          {isEmpty && isStreaming ? (
+            <div className="flex items-center gap-1.5 py-1 font-mono text-[11px] text-muted-foreground">
+              <Activity className="h-3 w-3 animate-pulse text-accent" />
+              <span>等待子 agent 输出…</span>
+            </div>
+          ) : (
+            <MessageContent message={subMessage} />
+          )}
+
+          {/* 二级及以上嵌套 */}
+          {subMessage.subMessages && subMessage.subMessages.length > 0 && (
+            <div className="mt-2.5 space-y-1.5 border-l-2 border-dashed border-border/50 pl-3">
+              {subMessage.subMessages.map((s) => (
+                <SubMessageBubble key={s.id} subMessage={s} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------- */
+/* Message content (parts) — shared between top and sub messages     */
+/* ---------------------------------------------------------------- */
+
 function MessageContent({ message }: { message: ChatMessage }) {
   if (message.parts.length === 0 && message.status === "streaming") {
     return (
@@ -147,6 +276,10 @@ function MessageContent({ message }: { message: ChatMessage }) {
         <span className="h-1.5 w-1.5 rounded-full bg-current animate-pulse-dot [animation-delay:0.3s]" />
       </div>
     );
+  }
+
+  if (message.parts.length === 0) {
+    return null;
   }
 
   return (
