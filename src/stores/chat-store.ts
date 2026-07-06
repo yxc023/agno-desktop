@@ -639,9 +639,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // 每个 sub-agent run_id 一条 ChatMessage，通过外层 tool_call_id 挂到
       // chat_history 里的 assistant message（按 tool_calls[].id 对齐）。
       //
-      // 匹配成功后，每条 root message 的 parts[] 末尾注入一个 SubMessageMarker，
-      // chip 出现在那里；用户点 chip 弹出右侧抽屉看完整 sub-agent 流。
-      const childMessagesByParent = new Map<string, ChatMessage[]>();
+      // 每个 root message 的 sub-messages。每个 anchor 记录是哪个 outer tool_call_id
+      // 触发的这个 sub-agent —— marker 注入时按这个 id 找到对应的 tool_call part，
+      // 把 marker 紧跟在它后面，让用户视觉上看到"这个 chip 是被这条 tool call 唤起的"。
+      // 对于 Team mode / fallback 等拿不到 outer tool_call_id 的情况，记 null 走末尾兜底。
+      const childMessagesByParent = new Map<
+        string,
+        Array<{ subMessage: ChatMessage; outerToolCallId: string | null }>
+      >();
       const attachedRunIds = new Set<string>();
 
       /** 把 sub-agent run 的 event 数组转成一条 ChatMessage。 */
@@ -887,10 +892,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
           const subs = subsByOuterTc.get(tcId);
           if (!subs || subs.length === 0) return;
           const list = childMessagesByParent.get(root.id) ?? [];
-          const seen = new Set(list.map((m) => m.runId));
+          const seen = new Set(list.map((a) => a.subMessage.runId));
           for (const s of subs) {
             if (s.runId && !seen.has(s.runId)) {
-              list.push({ ...s, parentMessageId: root.id });
+              list.push({
+                subMessage: { ...s, parentMessageId: root.id },
+                outerToolCallId: tcId,
+              });
               seen.add(s.runId);
             }
           }
@@ -923,9 +931,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
       // 阶段 B：Team 模式 — runs[].parent_run_id 真有值的情况
       // (WorkspaceContextProvider 模式 events[] 已经覆盖；这里是 Agno Team 的入口)
-      const buildSubFromChildRun = (cr: AgRunResponse, parentId: string): ChatMessage[] => {
+      const buildSubFromChildRun = (
+        cr: AgRunResponse,
+        parentId: string
+      ): ChatMessage => {
         const subMsgs = runToChatMessages(cr);
-        return subMsgs.map((sm) => ({
+        const sm = subMsgs[0]; // child run 作为一个 message
+        return {
           ...sm,
           parentMessageId: parentId,
           agentId: cr.agent_id ?? sm.agentId,
@@ -936,7 +948,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             cr.agent_id ??
             cr.team_id ??
             sm.displayName,
-        }));
+        };
       };
       for (const root of messages) {
         if (!root.runId) continue;
@@ -946,7 +958,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
         for (const cr of childRuns) {
           if (!cr.run_id || attachedRunIds.has(cr.run_id)) continue;
           attachedRunIds.add(cr.run_id);
-          list.push(...buildSubFromChildRun(cr, root.id));
+          list.push({
+            subMessage: buildSubFromChildRun(cr, root.id),
+            outerToolCallId: null, // Team 模式暂时没法锚定具体 tool_call
+          });
         }
         childMessagesByParent.set(root.id, list);
       }
@@ -981,7 +996,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
                   );
                   if (closest) {
                     const list = childMessagesByParent.get(closest.id) ?? [];
-                    list.push(...buildSubFromChildRun(cr, closest.id));
+                    list.push({
+                      subMessage: buildSubFromChildRun(cr, closest.id),
+                      outerToolCallId: null,
+                    });
                     childMessagesByParent.set(closest.id, list);
                     placed = true;
                     break;
@@ -993,7 +1011,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
               const last = assistantMsgs[assistantMsgs.length - 1];
               if (last) {
                 const list = childMessagesByParent.get(last.id) ?? [];
-                list.push(...buildSubFromChildRun(cr, last.id));
+                list.push({
+                  subMessage: buildSubFromChildRun(cr, last.id),
+                  outerToolCallId: null,
+                });
                 childMessagesByParent.set(last.id, list);
               }
             }
@@ -1001,25 +1022,79 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
       }
 
-      // 把每个 root message 的 sub-messages 注入 parts[] 末尾的 marker
+      // 给每个 root message 注入 marker part，让 chip 出现在 sub-agent 触发处
       const finalMessages = messages.map((m) => {
-        let subs = childMessagesByParent.get(m.id);
-        if (!subs || subs.length === 0) return m;
-        subs = [...subs].sort((a, b) => a.createdAt - b.createdAt);
+        const anchors = childMessagesByParent.get(m.id);
+        if (!anchors || anchors.length === 0) return m;
+        // 1) 把 sub-messages 装进 message（取出去 anchor 信息）
+        const subs = anchors
+          .map((a) => a.subMessage)
+          .sort((a, b) => a.createdAt - b.createdAt);
+        const next: ChatMessage = { ...m, subMessages: subs };
 
-        const next = { ...m, subMessages: subs };
-        const markerIds = new Set(
-          next.parts
-            .filter((p) => p.type === "sub_message_marker")
-            .map((p) => (p as any).subMessageId as string)
-        );
-        for (const s of subs) {
-          if (markerIds.has(s.id)) continue;
-          next.parts = [
-            ...next.parts,
-            { type: "sub_message_marker", subMessageId: s.id },
-          ];
+        // 2) 收集已有的 marker（避免重复）
+        const existingMarkers = new Set<string>();
+        for (const p of next.parts) {
+          if (p.type === "sub_message_marker") {
+            existingMarkers.add((p as any).subMessageId);
+          }
         }
+
+        // 3) 按 outer tool_call_id 把 marker 紧跟对应 tool_call part 后面。
+        //    没有 outerToolCallId 的 fallback 到末尾兜底。
+        const newParts: MessagePart[] = [];
+        const orphanMarkers: Array<{
+          subMessageId: string;
+          outerToolCallId: string | null;
+        }> = [];
+        const toolCallToAnchors = new Map<string, string[]>(); // tcId -> subMessageIds
+        for (const a of anchors) {
+          if (!a.subMessage.id || existingMarkers.has(a.subMessage.id)) continue;
+          if (a.outerToolCallId) {
+            const arr = toolCallToAnchors.get(a.outerToolCallId) ?? [];
+            arr.push(a.subMessage.id);
+            toolCallToAnchors.set(a.outerToolCallId, arr);
+          } else {
+            orphanMarkers.push({
+              subMessageId: a.subMessage.id,
+              outerToolCallId: null,
+            });
+          }
+        }
+
+        // 把 tool_call → sub-messageIds map 按 tool_call 在 parts[] 的位置排序
+        const orderedInsertions: Array<{ afterIndex: number; subMessageIds: string[] }> = [];
+        for (let i = 0; i < next.parts.length; i++) {
+          const part = next.parts[i];
+          if (part.type === "tool_call") {
+            const tcId = (part as ToolCallPart).toolCallId;
+            const ids = toolCallToAnchors.get(tcId);
+            if (ids?.length) {
+              orderedInsertions.push({ afterIndex: i, subMessageIds: ids });
+            }
+          }
+        }
+
+        // 重建 parts：在每个 tool_call 后插入对应 markers；orphan（不知道 tcId）追加到末尾
+        let insIdx = 0;
+        for (let i = 0; i < next.parts.length; i++) {
+          newParts.push(next.parts[i]);
+          while (
+            insIdx < orderedInsertions.length &&
+            orderedInsertions[insIdx].afterIndex === i
+          ) {
+            for (const id of orderedInsertions[insIdx].subMessageIds) {
+              newParts.push({ type: "sub_message_marker", subMessageId: id });
+            }
+            insIdx++;
+          }
+        }
+        // 处理孤儿（理论上不会发生——只要 outer tool_call_id 在 chat_history 的 tool_calls 里）
+        for (const o of orphanMarkers) {
+          newParts.push({ type: "sub_message_marker", subMessageId: o.subMessageId });
+        }
+
+        next.parts = newParts;
         return next;
       });
 
