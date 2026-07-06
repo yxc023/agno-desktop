@@ -8,14 +8,13 @@
  * - 内容复用 MessageContent（与主流程一致）
  */
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import {
   X,
   Bot,
   Loader2,
   ChevronLeft,
   ChevronRight,
-  Activity,
   Copy,
 } from "lucide-react";
 import { formatRelativeTime } from "@/lib/utils";
@@ -40,6 +39,18 @@ export function SubAgentSidePanel() {
     const list = s.messagesBySession[t.sessionId] ?? [];
     return findInTree(list, t.subMessageId);
   });
+
+  // a11y 最小集合：面板打开时把焦点放到关闭按钮上。这样键盘用户按 Enter
+  // 就能立即关掉，Tab 键的第一站也是合理的。
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    if (stack.length === 0) return;
+    // requestAnimationFrame 跳过 mount 时的 focus 顺序问题
+    const id = requestAnimationFrame(() => {
+      closeButtonRef.current?.focus();
+    });
+    return () => cancelAnimationFrame(id);
+  }, [stack.length]);
 
   // Esc 在嵌套栈里先 pop 一层；栈底才整体关闭。
   useEffect(() => {
@@ -83,6 +94,7 @@ export function SubAgentSidePanel() {
           onClose={close}
           onPop={pop}
           canPop={stack.length > 1}
+          closeButtonRef={closeButtonRef}
         />
 
         <div className="flex-1 overflow-y-auto">
@@ -99,12 +111,14 @@ function SubAgentHeader({
   onClose,
   onPop,
   canPop,
+  closeButtonRef,
 }: {
   top: { sessionId: string; subMessageId: string };
   message: ChatMessage | null | undefined;
   onClose: () => void;
   onPop: () => void;
   canPop: boolean;
+  closeButtonRef: React.RefObject<HTMLButtonElement | null>;
 }) {
   const stack = useUIStore((s) => s.subAgentPanel.stack);
 
@@ -205,6 +219,7 @@ function SubAgentHeader({
         onClick={onClose}
         className="h-7 w-7"
         title="关闭（Esc）"
+        ref={closeButtonRef}
       >
         <X className="h-4 w-4" />
       </Button>
@@ -257,9 +272,6 @@ function SubAgentBody({
     );
   }
 
-  const isEmptyStreaming =
-    message.parts.length === 0 && message.status === "streaming";
-
   return (
     <div className="flex flex-col">
       {/* summary bar */}
@@ -293,16 +305,15 @@ function SubAgentBody({
         </span>
       </div>
 
-      {/* 主内容：复用 MessageContent，marker 用 pushPanel 让用户在同一面板栈深入 */}
+      {/* 主内容：复用 MessageContent，loadingHint="sub-agent" 让空 streaming
+          显示副文案（"正在等待 sub-agent 输出…"），而不是主流程的三点跳动。
+          marker 用 pushPanel 让用户在同一面板栈深入。 */}
       <div className="px-4 py-4">
-        {isEmptyStreaming ? (
-          <EmptyStreaming />
-        ) : (
-          <MessageContent
-            message={message}
-            onOpenSubAgent={(id) => pushPanel(top.sessionId, id)}
-          />
-        )}
+        <MessageContent
+          message={message}
+          onOpenSubAgent={(id) => pushPanel(top.sessionId, id)}
+          loadingHint="sub-agent"
+        />
       </div>
 
       {/* 嵌套 sub-of-sub 列表（即使无 marker 也兜底显示） */}
@@ -354,14 +365,5 @@ function CopyTextButton({ text }: { text: string }) {
     >
       <Copy className="h-3 w-3" />
     </Button>
-  );
-}
-
-function EmptyStreaming() {
-  return (
-    <div className="flex items-center gap-1.5 py-4 font-mono text-[11px] text-muted-foreground/70">
-      <Activity className="h-3 w-3 animate-pulse text-accent" />
-      <span>正在等待 sub-agent 输出…</span>
-    </div>
   );
 }

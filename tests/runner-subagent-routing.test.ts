@@ -226,13 +226,21 @@ async function main() {
       (p) => p.type === "tool_call"
     ) as any;
     assert(tool?.status === "completed", `member1 tool status=${tool?.status}`);
+    // 收紧断言：result 应该是非空数组（旧 fixture 是 `[{title,url}]`）。
+    // 旧版本（`Array.isArray(...) || typeof === 'object'`）会接受 `{}`，
+    // 导致 tool.result 是空对象时测试仍通过。
     assert(
-      Array.isArray(tool?.result) ||
-        typeof tool?.result === "string" ||
-        typeof tool?.result === "object",
-      `member1 tool result type=${
-        typeof tool?.result
-      }, value=${JSON.stringify(tool?.result)}`
+      Array.isArray(tool?.result) && tool.result.length >= 1,
+      `member1 tool.result is non-empty array (got ${JSON.stringify(
+        tool?.result
+      )})`
+    );
+    assert(
+      typeof tool?.result?.[0]?.title === "string" &&
+        typeof tool?.result?.[0]?.url === "string",
+      `member1 tool.result[0] has title+url (got ${JSON.stringify(
+        tool?.result?.[0]
+      )})`
     );
     const text = member1.parts
       .filter((p) => p.type === "text")

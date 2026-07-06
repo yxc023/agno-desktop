@@ -84,6 +84,15 @@ export const useUIStore = create<UIState>((set, get) => ({
   },
   pushSubAgentPanel: (sessionId, subMessageId) => {
     const cur = get().subAgentPanel;
+    // 同样的 (sessionId, subMessageId) 已经栈内 → 跳过，避免面包屑里
+    // 出现重复条目（连续点击同一个 sub-of-sub 不会堆栈）。
+    if (
+      cur.stack.some(
+        (e) => e.sessionId === sessionId && e.subMessageId === subMessageId
+      )
+    ) {
+      return;
+    }
     // Cap stack depth — a runaway click loop (or pathological nested
     // sub-of-sub config) would otherwise grow the breadcrumb row
     // indefinitely; the deeper levels also can't actually be rendered
