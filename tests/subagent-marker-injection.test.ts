@@ -8,8 +8,7 @@
  *   - Multiple subs produce multiple markers in chronological order.
  */
 import { ChatRunner } from "../src/lib/chat-runner";
-import type { AgRunResponse, AgToolCall } from "../src/lib/agno-types";
-import type { ChatMessage } from "../src/lib/message-types";
+import type { AgRunResponse } from "../src/lib/agno-types";
 
 async function* mockTeamStream() {
   const events: AgRunResponse[] = [
