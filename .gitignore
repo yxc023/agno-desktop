@@ -46,6 +46,9 @@ tmp/
 # Coverage
 coverage/
 
+# compound-engineering / ce-review pipeline artifacts
+.context/
+
 # Logs from dev runs
 *.log
 .worktrees

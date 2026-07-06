@@ -92,22 +92,18 @@ export class ChatRunner {
   }
 
   private markAllCancelled() {
-    if (this.topMessage) {
-      this.topMessage.status =
-        this.topMessage.parts.some(
-          (p) => p.type === "tool_call" && p.status === "calling"
-        )
-          ? "paused"
-          : "cancelled";
-    }
-    for (const sub of this.subMessages.values()) {
-      sub.status =
-        sub.parts.some(
-          (p) => p.type === "tool_call" && p.status === "calling"
-        )
-          ? "paused"
-          : "cancelled";
-    }
+    // Recursive walk — sub-of-sub messages live under sub.subMessages[].
+    // Without recursion, deeply nested sub-agents would be left in
+    // "streaming" / "paused" after abort, leading to zombie chips in the panel.
+    const visit = (m: ChatMessage) => {
+      m.status = m.parts.some(
+        (p) => p.type === "tool_call" && p.status === "calling"
+      )
+        ? "paused"
+        : "cancelled";
+      for (const s of m.subMessages ?? []) visit(s);
+    };
+    if (this.topMessage) visit(this.topMessage);
   }
 
   async run(
@@ -252,8 +248,14 @@ export class ChatRunner {
     const runId = data.run_id ?? this.topRunId;
     const parentRunId = data.parent_run_id ?? null;
 
-    // 1) 首个事件确立 top run
-    if (!this.topRunId && runId) {
+    // 1) 首个事件确立 top run — 仅当它是顶层事件（没有 parent_run_id）时才认定。
+    // 之前会把"任意第一个 event"当成 top，导致 sub-agent 的事件先到时被错认为 top，
+    // 后续真正的 outer 事件全部路由进错的 message 树。
+    if (
+      !this.topRunId &&
+      runId &&
+      (parentRunId === null || parentRunId === undefined)
+    ) {
       this.topRunId = runId;
       if (this.topMessage) {
         this.topMessage.runId = runId;
