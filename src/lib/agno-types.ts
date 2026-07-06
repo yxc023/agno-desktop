@@ -207,6 +207,9 @@ export interface AgRunResponse {
   messages?: AgChatMessage[];
   tools?: AgTool[];
   events?: any[];
+
+  /** AGNO 在 run 级持久化的 agent 标识 (e.g. "CodeSearch") — 用于判断 events[] 里哪个 agent_name 是"外层" */
+  agent_name?: string;
   metrics?: AgMessageMetrics;
   references?: AgReference[];
   citations?: AgCitation[];
@@ -242,6 +245,11 @@ export interface AgRunResponse {
   error?: string;
 }
 
+/**
+ * AGNO Trace / Span model (类型保留备用；当前 loadHistory 不直接调用 /traces）
+ *
+ * Sub-agent 历史通过 runs[i].events[] 直接重建，不需要额外的 trace API。
+ */
 export interface AgApproval {
   id: string;
   run_id: string;

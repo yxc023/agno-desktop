@@ -3,6 +3,7 @@ import { SessionList } from "@/components/sessions/SessionList";
 import { ChatPanel } from "@/components/chat/ChatPanel";
 import { InstancesPanel } from "@/components/instances/InstancesPanel";
 import { ApprovalDialog } from "@/components/chat/ApprovalDialog";
+import { SubAgentSidePanel } from "@/components/chat/SubAgentSidePanel";
 import { useInstancesStore } from "@/stores/instances-store";
 import { WelcomeScreen } from "@/pages/WelcomeScreen";
 
@@ -65,6 +66,7 @@ export function ChatPage() {
       <>
         <WelcomeScreen />
         <ApprovalDialog />
+        <SubAgentSidePanel />
       </>
     );
   }
@@ -117,6 +119,7 @@ export function ChatPage() {
         </aside>
       </div>
       <ApprovalDialog />
+      <SubAgentSidePanel />
     </>
   );
 }
