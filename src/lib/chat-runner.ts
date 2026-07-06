@@ -22,6 +22,9 @@ import {
   generateIdPlaceholder,
 } from "./message-types-helpers";
 import { parseSSEData } from "./sse-parser";
+
+/** 流式 event 之间的最长静默间隔。超过即视为 hang。 */
+const STREAM_NO_EVENT_TIMEOUT_MS = 5 * 60 * 1000;
 import { safeJsonParse } from "./utils";
 
 export interface ChatRunnerCallbacks {
@@ -125,12 +128,37 @@ export class ChatRunner {
         this.abortController.signal
       );
 
-      for await (const event of stream) {
-        if (this.abortController.signal.aborted) break;
-        const data = parseSSEData<AgRunResponse>(event);
-        if (!data) continue;
+      // 5 分钟没有任何 event 进来 → 视为 hang（broker 静默断连 / RST / TCP 超时
+      // 没回 FIN）。abortController.abort() 会让 for-await 跳出，然后 catch
+      // 走 abort 早返回分支——不会走到 error 分支污染 topMessage。
+      //
+      // 注：长 LLM 调用（5min+）理论上会被误伤。AGNO 的 max task duration 配置
+      // 是这种 timeout 的合适锚点；目前取保守值。如果后续发现误伤多，挪到
+      // settings store 里作为用户配置。
+      let noEventTimeout: ReturnType<typeof setTimeout> | null = null;
+      const resetNoEventTimeout = () => {
+        if (noEventTimeout) clearTimeout(noEventTimeout);
+        noEventTimeout = setTimeout(() => {
+          console.warn(
+            "ChatRunner: no SSE event in 5 min; aborting run as hung",
+            { runId: this.topRunId }
+          );
+          this.abortController?.abort();
+        }, STREAM_NO_EVENT_TIMEOUT_MS);
+      };
+      resetNoEventTimeout();
 
-        this.routeEvent(data, callbacks);
+      try {
+        for await (const event of stream) {
+          if (this.abortController.signal.aborted) break;
+          const data = parseSSEData<AgRunResponse>(event);
+          if (!data) continue;
+
+          resetNoEventTimeout();
+          this.routeEvent(data, callbacks);
+        }
+      } finally {
+        if (noEventTimeout) clearTimeout(noEventTimeout);
       }
 
       if (this.topMessage) {
@@ -381,6 +409,27 @@ export class ChatRunner {
 
   /**
    * 把单个 SSE event 归约到指定 target message 上
+   *
+   * 重要契约（修改前请先读这个）：
+   *
+   *   1. **就地变更**。`target.parts` / `target.status` / `target.parts[i].args` /
+   *      `target.parts[i].result` 等都通过 \`push\` / 索引赋值原地变更。
+   *      切勿在 applyEvent 内部 \`return { ...target, parts: [...] }\` 之类的
+   *      immutable 创建——下游 callback 直接把这个 target 传出去，store
+   *      端是直接 mutate 看到的。
+   *
+   *   2. **callback 触发**。applyEvent 自己**不调** callbacks.onMessageUpdate；
+   *      调用方（routeEvent / for-await）负责在一次 applyEvent 之后调一次
+   *      onMessageUpdate(target)，把变更推到 chat-store 的 updateAnyMessage。
+   *      store 端在 updateAnyMessage 用 round 5 #1 的 replaceInTree 浅克隆一次，
+   *      强制新 ref，bust Object.is 检查，让 React 重新渲染。
+   *
+   *   3. **target 是 top OR sub**。不假设它是谁——routeEvent 通过 resolveTarget
+   *      决定。applyEvent 自身对 topMessage / subMessages 一视同仁。
+   *
+   * 未来如果有人要重构 applyEvent 走 immutable，先在
+   * ChatRunner 与 chat-store 之间加一个"返回新 ChatMessage + 调 callback"
+   * 的中间层；不要直接在这里 break 契约。
    */
   private applyEvent(
     target: ChatMessage,
