@@ -57,9 +57,6 @@ export class ChatRunner {
   private topMessage: ChatMessage | null = null;
   /** 所有 sub-agent 消息，按 run_id 索引。 */
   private subMessages = new Map<string, ChatMessage>();
-  private currentAgentId: string | null = null;
-  /** 用于去重：同一 run_id 第一次见到时记下它的 parent_run_id。 */
-  private subParents = new Map<string, string>();
 
   isRunning() {
     return this.abortController !== null;
@@ -111,7 +108,6 @@ export class ChatRunner {
     callbacks: ChatRunnerCallbacks
   ): Promise<void> {
     this.abortController = new AbortController();
-    this.currentAgentId = params.agentId;
 
     const existing = params.existingAssistantMessage;
     this.topMessage = existing
@@ -191,7 +187,6 @@ export class ChatRunner {
     callbacks: ChatRunnerCallbacks
   ): Promise<void> {
     this.abortController = new AbortController();
-    this.currentAgentId = params.agentId;
     this.topRunId = params.runId;
     this.currentSessionId = params.sessionId ?? null;
 
@@ -309,9 +304,8 @@ export class ChatRunner {
     }
 
     // Case C: 已存在的 sub-message
-    if (this.subMessages.has(runId)) {
-      return this.subMessages.get(runId)!;
-    }
+    const existing = this.subMessages.get(runId);
+    if (existing) return existing;
 
     // Case D: 新 sub-message（parent 必须是 topRunId 或者某个已知的 sub）
     const parent =
@@ -334,7 +328,6 @@ export class ChatRunner {
         displayName: this.extractDisplayName(data),
       };
       this.subMessages.set(runId, sub);
-      this.subParents.set(runId, this.topRunId ?? "");
       if (this.topMessage) {
         this.topMessage = {
           ...this.topMessage,
@@ -362,7 +355,6 @@ export class ChatRunner {
       displayName: this.extractDisplayName(data),
     };
     this.subMessages.set(runId, sub);
-    this.subParents.set(runId, parentRunId);
 
     parent.subMessages = [...(parent.subMessages ?? []), sub];
 
@@ -511,7 +503,7 @@ export class ChatRunner {
         } else if (typeof data.reasoning === "string") {
           this.appendReasoning(target, data.reasoning);
         } else if (data.tool) {
-          const toolId = (data.tool as any).tool_call_id ?? (data.tool as any).id;
+          const toolId = data.tool.tool_call_id ?? data.tool.id;
           if (!this.findToolCall(target, toolId))
             this.startToolCall(target, data.tool);
           else this.completeToolCall(target, data.tool, data.tool_result);
@@ -634,7 +626,7 @@ export class ChatRunner {
       resultValue = safeJsonParse(result, result);
     }
 
-    const metrics = (tc as any).metrics;
+    const metrics = tc.metrics;
     target.parts[idx] = {
       ...existing,
       toolName:
@@ -642,8 +634,8 @@ export class ChatRunner {
           ? this.extractToolName(tc)
           : existing.toolName,
       result: resultValue,
-      status: (tc as any).tool_call_error ? "error" : "completed",
-      error: (tc as any).tool_call_error
+      status: tc.tool_call_error ? "error" : "completed",
+      error: tc.tool_call_error
         ? String(resultValue ?? "tool error")
         : undefined,
       metrics,

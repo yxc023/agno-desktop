@@ -4,6 +4,9 @@
 
 import { create } from "zustand";
 
+/** 上限：sub-agent 面板栈的最大深度（含根）。超过后 push 直接 no-op。 */
+const MAX_PANEL_STACK_DEPTH = 8;
+
 interface UIState {
   /** 添加实例对话框 */
   showAddInstance: boolean;
@@ -81,6 +84,11 @@ export const useUIStore = create<UIState>((set, get) => ({
   },
   pushSubAgentPanel: (sessionId, subMessageId) => {
     const cur = get().subAgentPanel;
+    // Cap stack depth — a runaway click loop (or pathological nested
+    // sub-of-sub config) would otherwise grow the breadcrumb row
+    // indefinitely; the deeper levels also can't actually be rendered
+    // (max practical team depth is ~3 today).
+    if (cur.stack.length >= MAX_PANEL_STACK_DEPTH) return;
     set({
       subAgentPanel: {
         stack: [...cur.stack, { sessionId, subMessageId }],

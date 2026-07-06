@@ -95,8 +95,6 @@ export interface ErrorPart {
 export interface SubMessageMarker {
   type: "sub_message_marker";
   subMessageId: string;
-  /** Optional preview tooltip / summary from runner */
-  summary?: string;
 }
 
 export type MessageRole = "user" | "assistant" | "system";

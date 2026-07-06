@@ -21,6 +21,7 @@ import { cn } from "@/lib/utils";
 import { Markdown } from "@/components/markdown/Markdown";
 import { ReasoningBlock } from "./ReasoningBlock";
 import { ToolCallCard } from "./ToolCallCard";
+import { useChatStore } from "@/stores/chat-store";
 import type { ChatMessage, MessagePart } from "@/lib/message-types";
 
 interface MessageContentProps {
@@ -184,8 +185,6 @@ function PartRenderer({
  * 复用：根据 onOpenSubAgent 是否传入，渲染成"打开侧栏"按钮；传入则用之。
  * 也负责从 chat-store 反查 sub-message（任意深度），拿到 displayName / status 摘要。
  */
-
-import { useChatStore } from "@/stores/chat-store";
 
 function SubMessageMarkerChip({
   part,
