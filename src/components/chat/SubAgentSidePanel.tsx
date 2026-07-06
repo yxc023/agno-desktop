@@ -32,15 +32,17 @@ export function SubAgentSidePanel() {
   const pop = useUIStore((s) => s.popSubAgentPanel);
   const currentSessionId = useSessionsStore((s) => s.currentSessionId);
 
-  // Esc 关闭
+  // Esc 在嵌套栈里先 pop 一层；栈底才整体关闭。
   useEffect(() => {
     if (stack.length === 0) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") close();
+      if (e.key !== "Escape") return;
+      if (stack.length > 1) pop();
+      else close();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [stack.length, close]);
+  }, [stack.length, close, pop]);
 
   // Session switch → 关闭面板。栈顶 (subMessageId) 引用的是旧 session 的 sub-message，
   // 留着不动会让 findInTree 返回 null、面板一直显示 "loading…"，且没有 close 路径。
@@ -222,7 +224,7 @@ function SubAgentBody({
       message
         ? message.parts
             .filter((p) => p.type === "text")
-            .map((p) => (p as any).text)
+            .map((p) => p.text)
             .join("").length
         : 0,
     [message]
@@ -232,7 +234,7 @@ function SubAgentBody({
     if (!message) return "";
     return message.parts
       .filter((p) => p.type === "text")
-      .map((p) => (p as any).text)
+      .map((p) => p.text)
       .join("\n");
   }, [message]);
 
@@ -335,7 +337,13 @@ function CopyTextButton({ text }: { text: string }) {
       variant="ghost"
       size="icon-sm"
       className="h-6 w-6"
-      onClick={() => navigator.clipboard?.writeText(text)}
+      onClick={() => {
+        // writeText 在 非 secure-context 或 权限拒绝 时会 reject —
+        // 否则会留下 unhandled promise rejection。
+        navigator.clipboard
+          ?.writeText(text)
+          ?.catch((err) => console.warn("clipboard write failed", err));
+      }}
       title="复制全部文本"
     >
       <Copy className="h-3 w-3" />

@@ -249,14 +249,7 @@ export interface AgRunResponse {
  * AGNO Trace / Span model (类型保留备用；当前 loadHistory 不直接调用 /traces）
  *
  * Sub-agent 历史通过 runs[i].events[] 直接重建，不需要额外的 trace API。
- * 这套类型仅作为 AGNO 数据形状的参考文档；如未来需要走 /traces 端点
- * （例如查 team 嵌套），可以解开注释直接用。
  */
-// export type AgSpanType = "AGENT" | "LLM" | "TOOL" | "TEAM" | "WORKFLOW";
-// export interface AgSpan { ... }
-// export interface AgTrace { ... }
-// export interface AgPaginatedTracesResponse { ... }
-
 export interface AgApproval {
   id: string;
   run_id: string;

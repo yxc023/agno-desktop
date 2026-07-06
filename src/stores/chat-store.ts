@@ -43,23 +43,6 @@ function findInTree(
   return null;
 }
 
-/** 收集所有 sub-message（任意深度），可用于 debug / fallback 列表展示。当前未直接使用，作为 helper 保留。 */
-// function collectSubMessages(messages: ChatMessage[]): ChatMessage[] {
-//   const out: ChatMessage[] = [];
-//   const walk = (ms: ChatMessage[]) => {
-//     for (const m of ms) {
-//       if (m.subMessages) {
-//         for (const s of m.subMessages) {
-//           out.push(s);
-//           walk([s]); // 嵌套
-//         }
-//       }
-//     }
-//   };
-//   walk(messages);
-//   return out;
-// }
-
 /** 把 ts 归一为毫秒。AGNO 给出的是秒（10 位左右），也可能直接给毫秒。 */
 function toMs(ts: number | undefined): number {
   if (!ts) return 0;
@@ -835,7 +818,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
             ? (() => {
                 const lastTs = subEvents[subEvents.length - 1].created_at;
                 const last = lastTs > 1e12 ? lastTs : lastTs * 1000;
-                return last - createdAt;
+                // Clamp to ≥0 — events may arrive out-of-order (clock skew,
+                // batched persistence), and SidePanel renders duration as
+                // "(duration/1000).toFixed(1)s"; a negative value renders
+                // garbage like "-0.5s".
+                return Math.max(0, last - createdAt);
               })()
             : undefined;
 
@@ -909,10 +896,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
             // Sub-agent event：仅在 outer scope 内计入
             const subRunId = ev?.run_id ?? null;
             if (currentOuterTcId && subRunId && ev?.agent_name) {
-              if (!scopeEventsBySubId.has(subRunId)) {
-                scopeEventsBySubId.set(subRunId, []);
+              let bucket = scopeEventsBySubId.get(subRunId);
+              if (!bucket) {
+                bucket = [];
+                scopeEventsBySubId.set(subRunId, bucket);
               }
-              scopeEventsBySubId.get(subRunId)!.push(ev);
+              bucket.push(ev);
             }
           }
         }
@@ -921,12 +910,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
         return out;
       };
 
-      // 阶段 A：从 events[] 提取——这是 AGNO 当前最可靠的数据源
+        // 阶段 A：从 events[] 提取——这是 AGNO 当前最可靠的数据源
       for (const run of runs) {
-        const events = (run as any).events;
+        const events = run.events;
         if (!Array.isArray(events) || events.length === 0) continue;
         const outerAgentName =
-          (run as any).agent_name ??
+          run.agent_name ??
           (events.find((e: any) => e?.agent_name)?.agent_name as string) ??
           "";
         if (!outerAgentName) continue;
@@ -996,8 +985,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
           agentId: cr.agent_id ?? sm.agentId,
           teamId: cr.team_id ?? sm.teamId,
           displayName:
-            (cr as any).extra_data?.agent_name ??
-            (cr as any).extra_data?.team_name ??
+            cr.extra_data?.agent_name ??
+            cr.extra_data?.team_name ??
             cr.agent_id ??
             cr.team_id ??
             sm.displayName,
@@ -1089,7 +1078,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const existingMarkers = new Set<string>();
         for (const p of next.parts) {
           if (p.type === "sub_message_marker") {
-            existingMarkers.add((p as any).subMessageId);
+            existingMarkers.add(p.subMessageId);
           }
         }
 

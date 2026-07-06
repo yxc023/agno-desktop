@@ -168,7 +168,7 @@ function SubAgentFooterAssistant({
   const exposedIds = new Set(
     parts
       .filter((p) => p.type === "sub_message_marker")
-      .map((p) => (p as any).subMessageId as string)
+      .map((p) => p.subMessageId)
   );
   const orphans = subs.filter((s) => !exposedIds.has(s.id));
   if (orphans.length === 0) return null;
