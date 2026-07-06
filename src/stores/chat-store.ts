@@ -11,6 +11,7 @@
 import { create } from "zustand";
 import { ChatRunner } from "@/lib/chat-runner";
 import type { ChatMessage, MessagePart, ToolCallPart } from "@/lib/message-types";
+import { displayNameForRun } from "@/lib/agent-name";
 import { useInstancesStore } from "./instances-store";
 import { useSessionsStore } from "./sessions-store";
 import { generateId } from "@/lib/utils";
@@ -98,6 +99,35 @@ function appendSubInTree(
 }
 
 /* ------------------------------------------------------------------ */
+/* Constants                                                           */
+/* ------------------------------------------------------------------ */
+
+/** messagesBySession 的 LRU 上限。超过后最久未访问的 session 会被清空。 */
+const MESSAGES_BY_SESSION_LRU_LIMIT = 20;
+
+/** loadHistory 的 in-flight generation map：单调递增整数，
+ *  用于检测"我的请求还没回，又有新的 loadHistory 启动了"，过时回调直接 no-op。 */
+const loadHistoryGeneration = new Map<string, number>();
+
+/** 给 set() 用的 LRU 收紧辅助：在 messagesBySession 中保留最近访问的 N 个。 */
+function pruneMessagesBySession(
+  map: Record<string, ChatMessage[]>,
+  limit: number
+): Record<string, ChatMessage[]> {
+  const keys = Object.keys(map);
+  if (keys.length <= limit) return map;
+  // Object key order is insertion order in modern JS engines; we treat
+  // it as access order on best-effort (the touched sessions are
+  // re-assigned below via a fresh object).
+  const keep = new Set(keys.slice(keys.length - limit));
+  const next: Record<string, ChatMessage[]> = {};
+  for (const k of keys) {
+    if (keep.has(k)) next[k] = map[k];
+  }
+  return next;
+}
+
+/* ------------------------------------------------------------------ */
 /* Types                                                               */
 /* ------------------------------------------------------------------ */
 
@@ -111,6 +141,9 @@ interface ChatState {
   runner: ChatRunner | null;
   /** 加载状态 */
   loadingHistory: boolean;
+  /** 最近一次 loadHistory 的错误信息（success / fallback 路径不设置）。UI 可以
+   *  据此决定是否显示 banner / 提示用户"部分历史可能不完整"。 */
+  loadHistoryError: string | null;
 
   setSelectedAgent: (id: string | null, type?: "agent" | "team" | "workflow") => void;
   setMessages: (sessionId: string, messages: ChatMessage[]) => void;
@@ -302,11 +335,7 @@ function runToChatMessages(
       agentId: run.agent_id ?? undefined,
       teamId: run.team_id ?? undefined,
       runId: run.run_id,
-      displayName:
-        (run as any).extra_data?.agent_name ??
-        (run as any).extra_data?.team_name ??
-        run.agent_id ??
-        run.team_id,
+      displayName: displayNameForRun(run) ?? undefined,
       metrics: m.metrics
         ? {
             input_tokens: m.metrics.input_tokens,
@@ -330,14 +359,26 @@ export const useChatStore = create<ChatState>((set, get) => ({
   selectedType: "agent",
   runner: null,
   loadingHistory: false,
+  loadHistoryError: null,
 
   setSelectedAgent: (id, type = "agent") =>
     set({ selectedAgentId: id, selectedType: type }),
 
   setMessages: (sessionId, messages) =>
-    set((s) => ({
-      messagesBySession: { ...s.messagesBySession, [sessionId]: messages },
-    })),
+    set((s) => {
+      // 把目标 session 重新插入到 map 末尾（标记为最近访问），再做 LRU 收紧。
+      const next: Record<string, ChatMessage[]> = {};
+      for (const [k, v] of Object.entries(s.messagesBySession)) {
+        if (k !== sessionId) next[k] = v;
+      }
+      next[sessionId] = messages;
+      return {
+        messagesBySession: pruneMessagesBySession(
+          next,
+          MESSAGES_BY_SESSION_LRU_LIMIT
+        ),
+      };
+    }),
 
   appendMessage: (sessionId, message) =>
     set((s) => {
@@ -394,15 +435,38 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (!activeId) return;
     const client = useInstancesStore.getState().getClient(activeId);
     if (!client) return;
-    set({ loadingHistory: true });
+    // in-flight token: 同一 sessionId 多次并发 loadHistory 时，
+    // 只有最后一次的 setMessages 会落地。早于当前 generation 的回调
+    // 直接 no-op，避免慢请求覆盖快请求的 state。
+    const myGen = (loadHistoryGeneration.get(sessionId) ?? 0) + 1;
+    loadHistoryGeneration.set(sessionId, myGen);
+    set({ loadingHistory: true, loadHistoryError: null });
     try {
-      // 并行拉取 session 详情和 runs
-      const [detail, runs] = await Promise.all([
+      // 并行拉取 session 详情和 runs。getSessionRuns 失败时仍继续
+      // （chat_history 本身是 OK 的，只是 sub-agent 历史会缺），但暴露
+      // 给 store 让 UI 可以提示。
+      const [detail, runsResult] = await Promise.all([
         client.getSession(sessionId),
         client
           .getSessionRuns(sessionId)
-          .catch(() => [] as Awaited<ReturnType<typeof client.getSessionRuns>>),
+          .then(
+            (r) => ({ ok: true as const, value: r }),
+            (err: unknown) => {
+              const msg = err instanceof Error ? err.message : String(err);
+              console.warn(
+                "loadHistory: getSessionRuns failed; sub-agent history will be missing",
+                { sessionId, error: msg }
+              );
+              return { ok: false as const, error: msg };
+            }
+          ),
       ]);
+      const runs = runsResult.ok
+        ? runsResult.value
+        : ([] as Awaited<ReturnType<typeof client.getSessionRuns>>);
+      if (!runsResult.ok) {
+        set({ loadHistoryError: runsResult.error });
+      }
       const history = detail.chat_history ?? [];
 
       // 索引：run_id -> run 对象（用于拿 reasoning_content 等）
@@ -1046,12 +1110,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           parentMessageId: parentId,
           agentId: cr.agent_id ?? sm.agentId,
           teamId: cr.team_id ?? sm.teamId,
-          displayName:
-            cr.extra_data?.agent_name ??
-            cr.extra_data?.team_name ??
-            cr.agent_id ??
-            cr.team_id ??
-            sm.displayName,
+          displayName: displayNameForRun(cr) ?? sm.displayName,
         };
       };
       // 阶段 B：Team 模式 — runs[].parent_run_id 真有值的情况
@@ -1236,11 +1295,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
       const finalMessages = messages.map((m) => attachAnchors(m));
 
-      get().setMessages(sessionId, finalMessages);
+      // 如果自 fetch 开始后又有更新的 loadHistory 触发，跳过本轮的 setMessages
+      // —— 后启动的请求会负责最终的 state 落地。
+      if (loadHistoryGeneration.get(sessionId) === myGen) {
+        get().setMessages(sessionId, finalMessages);
+      }
     } catch (err) {
       console.error("loadHistory failed", err);
+      if (loadHistoryGeneration.get(sessionId) === myGen) {
+        const msg = err instanceof Error ? err.message : String(err);
+        set({ loadHistoryError: msg });
+      }
     } finally {
-      set({ loadingHistory: false });
+      if (loadHistoryGeneration.get(sessionId) === myGen) {
+        set({ loadingHistory: false });
+      }
     }
   },
 

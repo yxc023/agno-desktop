@@ -22,6 +22,7 @@ import { formatRelativeTime } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useChatStore } from "@/stores/chat-store";
+import type { ChatMessage } from "@/lib/message-types";
 import { useSessionsStore } from "@/stores/sessions-store";
 import { useUIStore, findInTree } from "@/stores/ui-store";
 import { MessageContent } from "./MessageContent";
@@ -31,6 +32,14 @@ export function SubAgentSidePanel() {
   const close = useUIStore((s) => s.closeSubAgentPanel);
   const pop = useUIStore((s) => s.popSubAgentPanel);
   const currentSessionId = useSessionsStore((s) => s.currentSessionId);
+  // 顶层用 findInTree 一次，Header 和 Body 共享同一个 message 引用，
+  // 避免双订阅（之前两边都各自 selector 调用 findInTree，N×M walk 翻倍）。
+  const message = useChatStore((s) => {
+    if (stack.length === 0) return null;
+    const t = stack[stack.length - 1];
+    const list = s.messagesBySession[t.sessionId] ?? [];
+    return findInTree(list, t.subMessageId);
+  });
 
   // Esc 在嵌套栈里先 pop 一层；栈底才整体关闭。
   useEffect(() => {
@@ -70,13 +79,14 @@ export function SubAgentSidePanel() {
       >
         <SubAgentHeader
           top={top}
+          message={message}
           onClose={close}
           onPop={pop}
           canPop={stack.length > 1}
         />
 
         <div className="flex-1 overflow-y-auto">
-          <SubAgentBody top={top} />
+          <SubAgentBody top={top} message={message} />
         </div>
       </aside>
     </>
@@ -85,20 +95,18 @@ export function SubAgentSidePanel() {
 
 function SubAgentHeader({
   top,
+  message,
   onClose,
   onPop,
   canPop,
 }: {
   top: { sessionId: string; subMessageId: string };
+  message: ChatMessage | null | undefined;
   onClose: () => void;
   onPop: () => void;
   canPop: boolean;
 }) {
   const stack = useUIStore((s) => s.subAgentPanel.stack);
-  const message = useChatStore((s) => {
-    const list = s.messagesBySession[top.sessionId] ?? [];
-    return findInTree(list, top.subMessageId);
-  });
 
   const name = message?.displayName ?? message?.agentId ?? "sub-agent";
   const isStreaming = message?.status === "streaming";
@@ -206,13 +214,11 @@ function SubAgentHeader({
 
 function SubAgentBody({
   top,
+  message,
 }: {
   top: { sessionId: string; subMessageId: string };
+  message: ChatMessage | null | undefined;
 }) {
-  const message = useChatStore((s) => {
-    const list = s.messagesBySession[top.sessionId] ?? [];
-    return findInTree(list, top.subMessageId);
-  });
   const pushPanel = useUIStore((s) => s.pushSubAgentPanel);
 
   const toolCount = useMemo(

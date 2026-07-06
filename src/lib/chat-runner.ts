@@ -15,6 +15,7 @@
 
 import { AgnoClient } from "./agno-client";
 import type { AgRunResponse, AgToolCall } from "./agno-types";
+import { displayNameForRun } from "./agent-name";
 import {
   type ChatMessage,
   type ToolCallPart,
@@ -153,6 +154,17 @@ export class ChatRunner {
         this.topMessage.error = msg;
         this.topMessage.parts.push({ type: "error", message: msg });
         callbacks.onMessageUpdate(this.topMessage);
+      }
+      // sub-agent 错误：把 error part 也写到还在 streaming 的 sub 消息上，
+      // 侧栏面板才能看到 "sub-agent 失败在这里" 而不是永远显示
+      // loading dots。sub 自身已经走 onMessageUpdate；这里只需要更新状态。
+      for (const sub of this.subMessages.values()) {
+        if (sub.status === "streaming" || sub.status === "paused") {
+          sub.status = "error";
+          sub.error = msg;
+          sub.parts.push({ type: "error", message: msg });
+          callbacks.onMessageUpdate(sub);
+        }
       }
       callbacks.onRunError?.(this.topRunId ?? "", msg);
     } finally {
@@ -500,16 +512,8 @@ export class ChatRunner {
     }
   }
 
-  private extractDisplayName(data: any): string | undefined {
-    const nm =
-      data.agent_name ??
-      data.team_name ??
-      data.member_name ??
-      data?.extra_data?.agent_name;
-    if (typeof nm === "string" && nm.trim()) return nm;
-    if (data.agent_id) return String(data.agent_id);
-    if (data.team_id) return String(data.team_id);
-    return undefined;
+  private extractDisplayName(data: AgRunResponse): string | undefined {
+    return displayNameForRun(data);
   }
 
   private appendText(
