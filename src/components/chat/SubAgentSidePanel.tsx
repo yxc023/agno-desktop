@@ -20,10 +20,10 @@ import {
 import { formatRelativeTime } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { useChatStore } from "@/stores/chat-store";
+import { useChatStore, useSubMessageById } from "@/stores/chat-store";
 import type { ChatMessage } from "@/lib/message-types";
 import { useSessionsStore } from "@/stores/sessions-store";
-import { useUIStore, findInTree } from "@/stores/ui-store";
+import { useUIStore } from "@/stores/ui-store";
 import { MessageContent } from "./MessageContent";
 
 export function SubAgentSidePanel() {
@@ -31,14 +31,13 @@ export function SubAgentSidePanel() {
   const close = useUIStore((s) => s.closeSubAgentPanel);
   const pop = useUIStore((s) => s.popSubAgentPanel);
   const currentSessionId = useSessionsStore((s) => s.currentSessionId);
-  // 顶层用 findInTree 一次，Header 和 Body 共享同一个 message 引用，
-  // 避免双订阅（之前两边都各自 selector 调用 findInTree，N×M walk 翻倍）。
-  const message = useChatStore((s) => {
-    if (stack.length === 0) return null;
-    const t = stack[stack.length - 1];
-    const list = s.messagesBySession[t.sessionId] ?? [];
-    return findInTree(list, t.subMessageId);
-  });
+  // 顶层用 store 维护的 id 索引 O(1) 查 sub-message，Header 和 Body
+  // 共享同一个 message 引用，避免双订阅 + 双 walk。
+  const top = stack.length > 0 ? stack[stack.length - 1] : null;
+  const message = useSubMessageById(
+    top?.sessionId ?? null,
+    top?.subMessageId ?? null
+  );
 
   // a11y 最小集合：面板打开时把焦点放到关闭按钮上。这样键盘用户按 Enter
   // 就能立即关掉，Tab 键的第一站也是合理的。
@@ -73,8 +72,7 @@ export function SubAgentSidePanel() {
     }
   }, [currentSessionId, stack, close]);
 
-  if (stack.length === 0) return null;
-  const top = stack[stack.length - 1];
+  if (!top) return null;
 
   return (
     <>
