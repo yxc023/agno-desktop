@@ -43,6 +43,29 @@ function findInTree(
   return null;
 }
 
+/** 收集所有 sub-message（任意深度），可用于 debug / fallback 列表展示。 */
+function collectSubMessages(messages: ChatMessage[]): ChatMessage[] {
+  const out: ChatMessage[] = [];
+  const walk = (ms: ChatMessage[]) => {
+    for (const m of ms) {
+      if (m.subMessages) {
+        for (const s of m.subMessages) {
+          out.push(s);
+          walk([s]); // 嵌套
+        }
+      }
+    }
+  };
+  walk(messages);
+  return out;
+}
+
+/** 把 ts 归一为毫秒。AGNO 给出的是秒（10 位左右），也可能直接给毫秒。 */
+function toMs(ts: number | undefined): number {
+  if (!ts) return 0;
+  return ts > 1e12 ? ts : ts * 1000;
+}
+
 /** 替换树中的某条 message（返回新数组）。 */
 function replaceInTree(
   messages: ChatMessage[],
@@ -602,44 +625,143 @@ export const useChatStore = create<ChatState>((set, get) => ({
       flushAssistant();
 
       // —— 注入 sub-agents ——
-      // 对每条 assistant 消息，如果其 runId 对应 root run 且有 child runs，
-      // 把 child runs 转成 ChatMessage[] 挂到 subMessages。
+      //
+      // 两阶段匹配，让历史 session 也能见到 sub-agent 内容：
+      //
+      // 阶段 1（直接匹配）：root message 的 runId == child run.parent_run_id
+      // 阶段 2（timestamp fallback）：按 chat_history 时间区间配对
+      //
+      // 匹配成功后，把 child run 转成 ChatMessage，并注入一个
+      // SubMessageMarker 到对应 root message.parts[] 末尾（chip 会出现在那里）。
       const childMessagesByParent = new Map<string, ChatMessage[]>();
+      const attachedRunIds = new Set<string>();
+
+      const buildSubFromChildRun = (cr: AgRunResponse, parentId: string): ChatMessage[] => {
+        const subMsgs = runToChatMessages(cr);
+        return subMsgs.map((sm) => ({
+          ...sm,
+          parentMessageId: parentId,
+          agentId: cr.agent_id ?? sm.agentId,
+          teamId: cr.team_id ?? sm.teamId,
+          displayName:
+            (cr as any).extra_data?.agent_name ??
+            (cr as any).extra_data?.team_name ??
+            cr.agent_id ??
+            cr.team_id ??
+            sm.displayName,
+        }));
+      };
+
+      // 阶段 1
       for (const root of messages) {
         if (!root.runId) continue;
         const childRuns = childRunsByParentRunId.get(root.runId);
         if (!childRuns || childRuns.length === 0) continue;
         const subs: ChatMessage[] = [];
         for (const cr of childRuns) {
-          const subMsgs = runToChatMessages(cr);
-          for (const sm of subMsgs) {
-            subs.push({
-              ...sm,
-              parentMessageId: root.id,
-              // parentRunId implied but not exposed in ChatMessage
-              agentId: cr.agent_id ?? sm.agentId,
-              teamId: cr.team_id ?? sm.teamId,
-              displayName:
-                (cr as any).extra_data?.agent_name ??
-                (cr as any).extra_data?.team_name ??
-                cr.agent_id ??
-                cr.team_id ??
-                sm.displayName,
-            });
-          }
+          if (!cr.run_id) continue;
+          attachedRunIds.add(cr.run_id);
+          subs.push(...buildSubFromChildRun(cr, root.id));
         }
         if (subs.length > 0) {
           childMessagesByParent.set(root.id, subs);
         }
       }
 
-      // Attach sub messages to their roots (immutable)
-      const finalMessages = messages.map((m) => {
-        const subs = childMessagesByParent.get(m.id);
-        if (subs) {
-          return { ...m, subMessages: subs };
+      // 阶段 2：timestamp fallback
+      // 按 chat_history user message 的时间把 assistant message 切成"回合区间"。
+      // 把所有未挂载的 child run 按 created_at 落到对应的 assistant message。
+      const allChildRuns = runs.filter(
+        (r) => r.parent_run_id && r.run_id && !attachedRunIds.has(r.run_id)
+      );
+      if (allChildRuns.length > 0) {
+        // user messages 时间区间：[user_i.createdAt, user_{i+1}.createdAt)
+        // 每个 assistant message 落在它前面那个 user 和下一个 user 之间。
+        const userTimes = messages
+          .filter((m) => m.role === "user")
+          .map((m) => m.createdAt)
+          .sort((a, b) => a - b);
+
+        const assistantMsgs = messages.filter((m) => m.role === "assistant");
+        if (assistantMsgs.length > 0) {
+          const bucketByAssistant = new Map<string, AgRunResponse[]>();
+          for (const cr of allChildRuns) {
+            const crMs = toMs(cr.created_at);
+            // 找到包含它的 assistant：assistant_ms 在 [user_t, user_next_t) 区间内
+            // 简化：找 assistant 索引 i，使得 cr 落在 user[i] 和 user[i+1] 之间
+            // 同时要求 assistant 的 createdAt 也在这个区间内（rough sanity）
+            let placed = false;
+            for (let i = 0; i < userTimes.length - 1; i++) {
+              const left = userTimes[i];
+              const right = userTimes[i + 1];
+              if (crMs >= left && crMs < right) {
+                // 找这个区间的 assistant（最接近 crMs 的 assistant）
+                const inRange = assistantMsgs.filter(
+                  (a) => a.createdAt >= left && a.createdAt <= right
+                );
+                if (inRange.length > 0) {
+                  const closest = inRange.reduce((best, a) =>
+                    Math.abs(a.createdAt - crMs) <
+                    Math.abs((best?.createdAt ?? 0) - crMs)
+                      ? a
+                      : best
+                  );
+                  if (closest) {
+                    const arr = bucketByAssistant.get(closest.id) ?? [];
+                    arr.push(cr);
+                    bucketByAssistant.set(closest.id, arr);
+                    placed = true;
+                    break;
+                  }
+                }
+              }
+            }
+            if (!placed) {
+              // 兜底：放到最后一个 assistant
+              const last = assistantMsgs[assistantMsgs.length - 1];
+              if (last) {
+                const arr = bucketByAssistant.get(last.id) ?? [];
+                arr.push(cr);
+                bucketByAssistant.set(last.id, arr);
+              }
+            }
+          }
+
+          for (const [parentId, runs2] of bucketByAssistant) {
+            const existing = childMessagesByParent.get(parentId) ?? [];
+            const subs: ChatMessage[] = [];
+            for (const cr of runs2) {
+              if (cr.run_id) attachedRunIds.add(cr.run_id);
+              subs.push(...buildSubFromChildRun(cr, parentId));
+            }
+            childMessagesByParent.set(parentId, [...existing, ...subs]);
+          }
         }
-        return m;
+      }
+
+      // 把每个 root message 的 sub-messages 注入 parts[] 末尾的 marker
+      // （按 child run 时间排序，让 chip 顺序稳定）
+      const finalMessages = messages.map((m) => {
+        let subs = childMessagesByParent.get(m.id);
+        if (!subs || subs.length === 0) return m;
+        // sort by runId（AGNO 通常包含时间信息，但不一定；先按 createdAt 排序）
+        subs = [...subs].sort((a, b) => a.createdAt - b.createdAt);
+
+        const next = { ...m, subMessages: subs };
+        // 在 parts[] 末尾追加对应数目的 marker；如果已经有 marker（streaming 后 reload）则跳过
+        const markerIds = new Set(
+          next.parts
+            .filter((p) => p.type === "sub_message_marker")
+            .map((p) => (p as any).subMessageId as string)
+        );
+        for (const s of subs) {
+          if (markerIds.has(s.id)) continue;
+          next.parts = [
+            ...next.parts,
+            { type: "sub_message_marker", subMessageId: s.id },
+          ];
+        }
+        return next;
       });
 
       get().setMessages(sessionId, finalMessages);

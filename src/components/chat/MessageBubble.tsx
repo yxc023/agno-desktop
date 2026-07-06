@@ -1,22 +1,18 @@
 import {
-  AlertCircle,
   User,
   Copy,
   Check,
-  ChevronDown,
-  ChevronRight,
   Bot,
-  Loader2,
-  Activity,
+  PanelRightOpen,
 } from "lucide-react";
 import { useState } from "react";
 import { cn, copyToClipboard, formatRelativeTime } from "@/lib/utils";
 import { Markdown } from "@/components/markdown/Markdown";
-import { ReasoningBlock } from "./ReasoningBlock";
-import { ToolCallCard } from "./ToolCallCard";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import type { ChatMessage, MessagePart } from "@/lib/message-types";
+import { useUIStore } from "@/stores/ui-store";
+import { MessageContent } from "./MessageContent";
 
 interface Props {
   message: ChatMessage;
@@ -35,7 +31,6 @@ export function MessageBubble({ message, onCopy }: Props) {
     return <UserMessage message={message} onCopy={onCopy} />;
   }
 
-  // assistant：完全平铺，无 avatar/名字
   return <AssistantMessage message={message} onCopy={onCopy} />;
 }
 
@@ -93,10 +88,11 @@ function UserMessage({ message, onCopy }: Props) {
 
 function AssistantMessage({ message, onCopy }: Props) {
   const [copied, setCopied] = useState(false);
-  const hasParts = message.parts.length > 0;
   const hasText = message.parts.some((p) => p.type === "text");
   const isStreaming = message.status === "streaming";
   const subMessages = message.subMessages ?? [];
+
+  const openPanel = useUIStore((s) => s.openSubAgentPanel);
 
   const text = message.parts
     .map((p) => (p.type === "text" ? p.text : ""))
@@ -120,16 +116,21 @@ function AssistantMessage({ message, onCopy }: Props) {
       )}
     >
       <div className="mx-auto max-w-3xl">
-        <MessageContent message={message} />
+        <MessageContent
+          message={message}
+          onOpenSubAgent={(id) =>
+            message.sessionId
+              ? openPanel(message.sessionId, id)
+              : undefined
+          }
+        />
 
-        {/* sub-agents (team / multi-agent) */}
-        {subMessages.length > 0 && (
-          <div className="mt-3 space-y-1.5">
-            {subMessages.map((sub) => (
-              <SubMessageBubble key={sub.id} subMessage={sub} />
-            ))}
-          </div>
-        )}
+        {/* 历史/未通过 marker 暴露的 sub-agent 的兜底入口 */}
+        <SubAgentFooterAssistant
+          subs={subMessages}
+          parts={message.parts}
+          sessionId={message.sessionId}
+        />
 
         {/* footer: 状态 + 指标 + copy */}
         {(isStreaming ||
@@ -150,259 +151,55 @@ function AssistantMessage({ message, onCopy }: Props) {
 }
 
 /* ---------------------------------------------------------------- */
-/* Sub-agent message block (team member / delegated agent)          */
+/* Sub-agent 兜底 footer（当 marker 缺失时的入口）                  */
 /* ---------------------------------------------------------------- */
 
-function SubMessageBubble({ subMessage }: { subMessage: ChatMessage }) {
-  const [open, setOpen] = useState(true);
-  const name =
-    subMessage.displayName ?? subMessage.agentId ?? "sub-agent";
-  const isStreaming = subMessage.status === "streaming";
-  const isCompleted = subMessage.status === "completed";
-  const isError = subMessage.status === "error";
-  const isCancelled = subMessage.status === "cancelled";
+function SubAgentFooterAssistant({
+  subs,
+  parts,
+  sessionId,
+}: {
+  subs: ChatMessage[];
+  parts: MessagePart[];
+  sessionId?: string;
+}) {
+  const openPanel = useUIStore((s) => s.openSubAgentPanel);
 
-  const statusLabel = isStreaming
-    ? "running"
-    : isCompleted
-    ? "done"
-    : isError
-    ? "failed"
-    : isCancelled
-    ? "cancelled"
-    : subMessage.status;
-
-  const toolCount = subMessage.parts.filter(
-    (p) => p.type === "tool_call"
-  ).length;
-  const hasReasoning = subMessage.parts.some((p) => p.type === "reasoning");
-  const hasText = subMessage.parts.some((p) => p.type === "text");
-  const isEmpty = subMessage.parts.length === 0;
-
-  return (
-    <div
-      className={cn(
-        "rounded-md border bg-muted/20",
-        isStreaming
-          ? "border-accent/40 bg-accent/[0.04]"
-          : "border-border/60"
-      )}
-    >
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors hover:bg-muted/40"
-      >
-        {open ? (
-          <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
-        ) : (
-          <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground" />
-        )}
-        <div className="flex h-4 w-4 shrink-0 items-center justify-center rounded bg-accent/15 ring-1 ring-accent/30">
-          <Bot className="h-2.5 w-2.5 text-accent" />
-        </div>
-        <span className="font-mono text-[11px] font-medium text-foreground/90">
-          {name}
-        </span>
-        <span className="font-mono text-[10px] text-muted-foreground/60">
-          · sub-agent
-        </span>
-        {toolCount > 0 && (
-          <span className="font-mono text-[10px] text-muted-foreground/60">
-            · {toolCount} tool{toolCount === 1 ? "" : "s"}
-          </span>
-        )}
-        {isStreaming && (
-          <span className="ml-auto flex items-center gap-1 font-mono text-[10px] text-accent">
-            <Loader2 className="h-2.5 w-2.5 animate-spin" />
-            running
-          </span>
-        )}
-        {!isStreaming && (
-          <span
-            className={cn(
-              "ml-auto font-mono text-[10px]",
-              isCompleted
-                ? "text-success/70"
-                : isError
-                ? "text-destructive"
-                : isCancelled
-                ? "text-warning"
-                : "text-muted-foreground/60"
-            )}
-          >
-            {statusLabel}
-            {hasText && isCompleted ? " · 文本" : ""}
-            {hasReasoning && isCompleted ? " · 推理" : ""}
-          </span>
-        )}
-      </button>
-
-      {open && (
-        <div className="border-t border-border/40 bg-background/30 px-3 py-2.5">
-          {isEmpty && isStreaming ? (
-            <div className="flex items-center gap-1.5 py-1 font-mono text-[11px] text-muted-foreground">
-              <Activity className="h-3 w-3 animate-pulse text-accent" />
-              <span>等待子 agent 输出…</span>
-            </div>
-          ) : (
-            <MessageContent message={subMessage} />
-          )}
-
-          {/* 二级及以上嵌套 */}
-          {subMessage.subMessages && subMessage.subMessages.length > 0 && (
-            <div className="mt-2.5 space-y-1.5 border-l-2 border-dashed border-border/50 pl-3">
-              {subMessage.subMessages.map((s) => (
-                <SubMessageBubble key={s.id} subMessage={s} />
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
+  const exposedIds = new Set(
+    parts
+      .filter((p) => p.type === "sub_message_marker")
+      .map((p) => (p as any).subMessageId as string)
   );
-}
-
-/* ---------------------------------------------------------------- */
-/* Message content (parts) — shared between top and sub messages     */
-/* ---------------------------------------------------------------- */
-
-function MessageContent({ message }: { message: ChatMessage }) {
-  if (message.parts.length === 0 && message.status === "streaming") {
-    return (
-      <div className="flex items-center gap-1.5 text-muted-foreground py-1">
-        <span className="h-1.5 w-1.5 rounded-full bg-current animate-pulse-dot" />
-        <span className="h-1.5 w-1.5 rounded-full bg-current animate-pulse-dot [animation-delay:0.15s]" />
-        <span className="h-1.5 w-1.5 rounded-full bg-current animate-pulse-dot [animation-delay:0.3s]" />
-      </div>
-    );
-  }
-
-  if (message.parts.length === 0) {
-    return null;
-  }
+  const orphans = subs.filter((s) => !exposedIds.has(s.id));
+  if (orphans.length === 0) return null;
 
   return (
-    <div className="space-y-1.5">
-      {message.parts.map((part, idx) => (
-        <PartRenderer
-          key={idx}
-          part={part}
-          message={message}
-          index={idx}
-        />
+    <div className="mt-3 flex flex-wrap items-center gap-1.5">
+      <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground/60 self-center">
+        sub-agent
+      </span>
+      {orphans.map((s) => (
+        <button
+          key={s.id}
+          onClick={() =>
+            sessionId ? openPanel(sessionId, s.id) : undefined
+          }
+          className="group inline-flex items-center gap-1 rounded-md border border-border bg-muted/40 px-2 py-0.5 text-left transition-colors hover:border-accent/50 hover:bg-accent/[0.05]"
+          title={
+            sessionId
+              ? `查看 ${s.displayName ?? s.agentId ?? "sub-agent"} 详情`
+              : "未关联 session"
+          }
+        >
+          <Bot className="h-3 w-3 text-accent" />
+          <span className="font-mono text-[10.5px] font-medium text-foreground/90">
+            {s.displayName ?? s.agentId ?? "sub-agent"}
+          </span>
+          <PanelRightOpen className="h-3 w-3 text-muted-foreground/60 transition-transform group-hover:translate-x-0.5" />
+        </button>
       ))}
     </div>
   );
-}
-
-function PartRenderer({
-  part,
-  message,
-  index,
-}: {
-  part: MessagePart;
-  message: ChatMessage;
-  index: number;
-}) {
-  const isLast = index === message.parts.length - 1;
-  const streaming =
-    message.status === "streaming" && isLast && part.type === "text";
-
-  switch (part.type) {
-    case "text":
-      return (
-        <div className="text-[14px] leading-[1.7] text-foreground/95">
-          <Markdown streaming={streaming}>{part.text}</Markdown>
-        </div>
-      );
-
-    case "reasoning":
-      return (
-        <ReasoningBlock
-          text={part.text}
-          steps={part.steps}
-          streaming={message.status === "streaming" && isLast}
-        />
-      );
-
-    case "tool_call":
-      return <ToolCallCard tool={part} />;
-
-    case "reference":
-      return (
-        <div className="my-2 overflow-hidden rounded-md border border-info/30 bg-info/[0.04]">
-          <div className="border-b border-info/20 bg-info/[0.06] px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider text-info">
-            引用来源 · {part.references.length}
-          </div>
-          <div className="space-y-1 p-2">
-            {part.references.map((ref, i) => (
-              <a
-                key={i}
-                href={ref.url}
-                target="_blank"
-                rel="noreferrer"
-                className="block rounded px-2 py-1.5 transition-colors hover:bg-info/[0.06]"
-              >
-                <div className="font-mono text-[10px] text-info/80">
-                  [{String(i + 1).padStart(2, "0")}]
-                </div>
-                <div className="text-[12.5px] font-medium text-info">
-                  {ref.title || ref.url}
-                </div>
-                {ref.excerpt && (
-                  <div className="mt-0.5 line-clamp-2 text-[11px] text-muted-foreground">
-                    {ref.excerpt}
-                  </div>
-                )}
-              </a>
-            ))}
-          </div>
-        </div>
-      );
-
-    case "image":
-      return (
-        <img
-          src={part.url}
-          alt={part.alt}
-          className="my-2 max-w-full rounded-md border"
-          loading="lazy"
-        />
-      );
-
-    case "audio":
-      return (
-        <audio controls src={part.url} className="my-2 w-full">
-          <track kind="captions" />
-        </audio>
-      );
-
-    case "video":
-      return (
-        <video
-          controls
-          src={part.url}
-          className="my-2 max-w-full rounded-md"
-        />
-      );
-
-    case "error":
-      return (
-        <div className="rounded-md border border-destructive/40 bg-destructive/[0.06] px-3 py-2 text-xs text-destructive flex items-start gap-2">
-          <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-          <div className="flex-1">
-            <div className="font-medium">错误</div>
-            <div className="mt-0.5 font-mono text-destructive/80">
-              {part.message}
-            </div>
-          </div>
-        </div>
-      );
-
-    default:
-      return null;
-  }
 }
 
 function MessageFooter({
