@@ -10,7 +10,7 @@
 
 import { create } from "zustand";
 import { ChatRunner } from "@/lib/chat-runner";
-import type { ChatMessage, MessagePart } from "@/lib/message-types";
+import type { ChatMessage, MessagePart, ToolCallPart } from "@/lib/message-types";
 import { useInstancesStore } from "./instances-store";
 import { useSessionsStore } from "./sessions-store";
 import { generateId } from "@/lib/utils";
@@ -43,22 +43,22 @@ function findInTree(
   return null;
 }
 
-/** 收集所有 sub-message（任意深度），可用于 debug / fallback 列表展示。 */
-function collectSubMessages(messages: ChatMessage[]): ChatMessage[] {
-  const out: ChatMessage[] = [];
-  const walk = (ms: ChatMessage[]) => {
-    for (const m of ms) {
-      if (m.subMessages) {
-        for (const s of m.subMessages) {
-          out.push(s);
-          walk([s]); // 嵌套
-        }
-      }
-    }
-  };
-  walk(messages);
-  return out;
-}
+/** 收集所有 sub-message（任意深度），可用于 debug / fallback 列表展示。当前未直接使用，作为 helper 保留。 */
+// function collectSubMessages(messages: ChatMessage[]): ChatMessage[] {
+//   const out: ChatMessage[] = [];
+//   const walk = (ms: ChatMessage[]) => {
+//     for (const m of ms) {
+//       if (m.subMessages) {
+//         for (const s of m.subMessages) {
+//           out.push(s);
+//           walk([s]); // 嵌套
+//         }
+//       }
+//     }
+//   };
+//   walk(messages);
+//   return out;
+// }
 
 /** 把 ts 归一为毫秒。AGNO 给出的是秒（10 位左右），也可能直接给毫秒。 */
 function toMs(ts: number | undefined): number {
@@ -626,16 +626,303 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
       // —— 注入 sub-agents ——
       //
-      // 两阶段匹配，让历史 session 也能见到 sub-agent 内容：
+      // 数据源：
+      //   - runs[0].events[] 持久化了所有 streaming 事件（含 sub-agent 的；
+      //     每个事件有 agent_id/agent_name/parent_run_id 用于区分）。
+      //     这是 AGNO `WorkspaceContextProvider`、`Team` 嵌套等场景的
+      //     唯一可靠数据源——`runs[]` 顶层 JSONB 不会为子 agent 单独建 run，
+      //     但 events[] 把所有 nesting 都打平+打上 tag 了。
+      //   - 我们不用 `/traces/{id}`，避免双数据源一致性成本。
       //
-      // 阶段 1（直接匹配）：root message 的 runId == child run.parent_run_id
-      // 阶段 2（timestamp fallback）：按 chat_history 时间区间配对
+      // 算法：扫描 events[] 流，找到外层 agent 的 ToolCallStarted(T) / ToolCallCompleted(T)
+      // 围成的"作用域"；作用域内所有 agent_name ≠ outer 的 event 聚成 sub-agents，
+      // 每个 sub-agent run_id 一条 ChatMessage，通过外层 tool_call_id 挂到
+      // chat_history 里的 assistant message（按 tool_calls[].id 对齐）。
       //
-      // 匹配成功后，把 child run 转成 ChatMessage，并注入一个
-      // SubMessageMarker 到对应 root message.parts[] 末尾（chip 会出现在那里）。
+      // 匹配成功后，每条 root message 的 parts[] 末尾注入一个 SubMessageMarker，
+      // chip 出现在那里；用户点 chip 弹出右侧抽屉看完整 sub-agent 流。
       const childMessagesByParent = new Map<string, ChatMessage[]>();
       const attachedRunIds = new Set<string>();
 
+      /** 把 sub-agent run 的 event 数组转成一条 ChatMessage。 */
+      const buildSubFromEvents = (
+        subRunId: string,
+        subEvents: any[]
+      ): ChatMessage => {
+        const parts: MessagePart[] = [];
+        let reasoningText = "";
+        let agentName = "";
+        let agentId = "";
+        let createdAt = 0;
+        const perTc = new Map<
+          string,
+          { idx: number; startedAt: number; tc: any }
+        >();
+
+        for (const ev of subEvents) {
+          if (!agentName && ev.agent_name) agentName = ev.agent_name;
+          if (!agentId && ev.agent_id) agentId = ev.agent_id;
+          const evTs =
+            typeof ev.created_at === "number"
+              ? ev.created_at > 1e12
+                ? ev.created_at
+                : ev.created_at * 1000
+              : 0;
+          if (evTs) {
+            if (!createdAt) createdAt = evTs;
+          }
+
+          // reasoning
+          const r =
+            typeof ev.reasoning_content === "string"
+              ? ev.reasoning_content
+              : typeof ev.reasoning === "string"
+              ? ev.reasoning
+              : null;
+          if (r) reasoningText += r;
+          // reason_steps (AGNO emits via ReasoningStep event)
+          // (not handled — events schema missing; reasoning content only)
+
+          const evName: string = ev.event ?? "";
+          const toolObj: any = ev.tool ?? null;
+
+          if (
+            (evName === "ToolCallStarted" || evName === "ToolCallStartedDelta") &&
+            toolObj
+          ) {
+            const tcid =
+              toolObj.tool_call_id ??
+              ev.tool_call_id ??
+              `tc-${Date.now()}-${Math.random()}`;
+            const toolName = toolObj.tool_name ?? "tool";
+            const args = toolObj.tool_args ?? {};
+            const part: ToolCallPart = {
+              type: "tool_call",
+              toolCallId: tcid,
+              toolName,
+              args,
+              status: "calling",
+              startedAt: evTs || Date.now(),
+            };
+            parts.push(part);
+            perTc.set(tcid, { idx: parts.length - 1, startedAt: part.startedAt, tc: toolObj });
+          } else if (
+            (evName === "ToolCallCompleted" ||
+              evName === "ToolCallResult") &&
+            toolObj
+          ) {
+            const tcid =
+              toolObj.tool_call_id ??
+              ev.tool_call_id ??
+              "";
+            let resultRaw = toolObj.result ?? null;
+            let resultValue: any = resultRaw;
+            if (typeof resultValue === "string") {
+              try {
+                resultValue = JSON.parse(resultValue);
+              } catch {
+                // keep string
+              }
+            }
+            const tracked = perTc.get(tcid);
+            if (tracked != null) {
+              const existing = parts[tracked.idx] as ToolCallPart;
+              const metrics = toolObj.metrics;
+              parts[tracked.idx] = {
+                ...existing,
+                result: resultValue,
+                status: toolObj.tool_call_error ? "error" : "completed",
+                error: toolObj.tool_call_error
+                  ? String(resultValue ?? "tool error")
+                  : undefined,
+                metrics,
+                endedAt: evTs || Date.now(),
+                durationMs:
+                  metrics?.duration != null
+                    ? Math.round(metrics.duration * 1000)
+                    : (evTs || Date.now()) - tracked.startedAt,
+              };
+            } else {
+              // 没看到 Started，直接 Completed——也 push 一条 completed 的
+              const part: ToolCallPart = {
+                type: "tool_call",
+                toolCallId: tcid || `tc-${Date.now()}-${Math.random()}`,
+                toolName: toolObj.tool_name ?? "tool",
+                args: toolObj.tool_args ?? {},
+                result: resultValue,
+                status: toolObj.tool_call_error ? "error" : "completed",
+                startedAt: evTs || Date.now(),
+                endedAt: evTs || Date.now(),
+              };
+              parts.push(part);
+            }
+            attachedRunIds.add(subRunId + ":" + tcid);
+          }
+
+          // sub-agent 最终文字输出（RunCompleted.content）
+          if (evName === "RunCompleted") {
+            const text =
+              typeof ev.content === "string"
+                ? ev.content
+                : typeof ev.content === "object" && ev.content
+                ? (ev.content as any).text ?? ""
+                : "";
+            if (text && text.trim()) {
+              parts.push({ type: "text", text });
+            }
+          }
+        }
+
+        if (reasoningText.trim()) {
+          parts.unshift({ type: "reasoning", text: reasoningText });
+        }
+
+        const durationMs =
+          createdAt && subEvents[subEvents.length - 1]?.created_at
+            ? (() => {
+                const lastTs = subEvents[subEvents.length - 1].created_at;
+                const last = lastTs > 1e12 ? lastTs : lastTs * 1000;
+                return last - createdAt;
+              })()
+            : undefined;
+
+        return {
+          id: generateId(),
+          role: "assistant",
+          parts,
+          status: "completed",
+          createdAt: createdAt || Date.now(),
+          runId: subRunId,
+          agentId: agentId || undefined,
+          teamId: undefined,
+          displayName: agentName || agentId || "sub-agent",
+          metrics: durationMs ? { duration: durationMs } : undefined,
+        };
+      };
+
+      /**
+       * 从 runs[].events[] 中提取 sub-agent ChatMessage，按外层 tool_call_id 分组。
+       *
+       * 返回: Map<outer tool_call_id, ChatMessage[]>
+       * - 一条 outer tool_call 可能含 1..N 个 sub-agent（Team 模式会出现）
+       * - 单 agent / 调普通工具时返回空 map
+       */
+      const extractSubAgents = (
+        events: any[],
+        outerAgentName: string
+      ): Map<string, ChatMessage[]> => {
+        const out = new Map<string, ChatMessage[]>();
+        let currentOuterTcId: string | null = null;
+        // scope 内累积的 sub-agent event，按 sub-run-id 分桶
+        const scopeEventsBySubId = new Map<string, any[]>();
+
+        const flushScope = () => {
+          if (!currentOuterTcId) return;
+          const subs: ChatMessage[] = [];
+          for (const [subRunId, subEvents] of scopeEventsBySubId) {
+            if (!subRunId || subEvents.length === 0) continue;
+            subs.push(buildSubFromEvents(subRunId, subEvents));
+          }
+          if (subs.length > 0) {
+            const existing = out.get(currentOuterTcId) ?? [];
+            const seen = new Set(existing.map((m) => m.runId));
+            for (const s of subs) {
+              if (s.runId && !seen.has(s.runId)) {
+                existing.push(s);
+                seen.add(s.runId);
+              }
+            }
+            out.set(currentOuterTcId, existing);
+          }
+        };
+
+        for (const ev of events ?? []) {
+          const evName: string = ev?.event ?? "";
+          const isOuter = ev?.agent_name === outerAgentName;
+          if (isOuter) {
+            if (evName === "ToolCallStarted") {
+              // 进入新 scope：先把上个 scope 收尾
+              flushScope();
+              currentOuterTcId =
+                ev.tool?.tool_call_id ?? ev.tool_call_id ?? null;
+              scopeEventsBySubId.clear();
+            } else if (evName === "ToolCallCompleted") {
+              // 收尾当前 scope
+              flushScope();
+              currentOuterTcId = null;
+              scopeEventsBySubId.clear();
+            }
+          } else {
+            // Sub-agent event：仅在 outer scope 内计入
+            const subRunId = ev?.run_id ?? null;
+            if (currentOuterTcId && subRunId && ev?.agent_name) {
+              if (!scopeEventsBySubId.has(subRunId)) {
+                scopeEventsBySubId.set(subRunId, []);
+              }
+              scopeEventsBySubId.get(subRunId)!.push(ev);
+            }
+          }
+        }
+        // 兜底：文件末尾还可能开着一个 scope
+        flushScope();
+        return out;
+      };
+
+      // 阶段 A：从 events[] 提取——这是 AGNO 当前最可靠的数据源
+      for (const run of runs) {
+        const events = (run as any).events;
+        if (!Array.isArray(events) || events.length === 0) continue;
+        const outerAgentName =
+          (run as any).agent_name ??
+          (events.find((e: any) => e?.agent_name)?.agent_name as string) ??
+          "";
+        if (!outerAgentName) continue;
+        const subsByOuterTc = extractSubAgents(events, outerAgentName);
+        if (subsByOuterTc.size === 0) continue;
+
+        // 把 sub-agents 通过外层 tool_call_id 挂到 chat_history 的 assistant 上。
+        // 优先用 runId 匹配；失败时回退到"扫所有 assistant message 看 tool_calls[] 是否包含 tcId"。
+        const runId = run.run_id;
+        const attach = (root: ChatMessage, tcId: string) => {
+          const subs = subsByOuterTc.get(tcId);
+          if (!subs || subs.length === 0) return;
+          const list = childMessagesByParent.get(root.id) ?? [];
+          const seen = new Set(list.map((m) => m.runId));
+          for (const s of subs) {
+            if (s.runId && !seen.has(s.runId)) {
+              list.push({ ...s, parentMessageId: root.id });
+              seen.add(s.runId);
+            }
+          }
+          childMessagesByParent.set(root.id, list);
+        };
+
+        // 先按 runId 匹配
+        let matchedByRunId = false;
+        for (const root of messages) {
+          if (root.runId === runId) {
+            const rootTcIds = (root.parts ?? [])
+              .filter((p) => p.type === "tool_call")
+              .map((p) => (p as ToolCallPart).toolCallId);
+            for (const tcId of rootTcIds) attach(root, tcId);
+            matchedByRunId = true;
+          }
+        }
+
+        // 兜底：用 tool_call_id 直接匹配 assistant messages
+        if (!matchedByRunId) {
+          for (const root of messages) {
+            if (root.role !== "assistant") continue;
+            const rootTcIds = (root.parts ?? [])
+              .filter((p) => p.type === "tool_call")
+              .map((p) => (p as ToolCallPart).toolCallId);
+            for (const tcId of rootTcIds) attach(root, tcId);
+          }
+        }
+      }
+
+      // 阶段 B：Team 模式 — runs[].parent_run_id 真有值的情况
+      // (WorkspaceContextProvider 模式 events[] 已经覆盖；这里是 Agno Team 的入口)
       const buildSubFromChildRun = (cr: AgRunResponse, parentId: string): ChatMessage[] => {
         const subMsgs = runToChatMessages(cr);
         return subMsgs.map((sm) => ({
@@ -651,51 +938,37 @@ export const useChatStore = create<ChatState>((set, get) => ({
             sm.displayName,
         }));
       };
-
-      // 阶段 1
       for (const root of messages) {
         if (!root.runId) continue;
         const childRuns = childRunsByParentRunId.get(root.runId);
         if (!childRuns || childRuns.length === 0) continue;
-        const subs: ChatMessage[] = [];
+        const list = childMessagesByParent.get(root.id) ?? [];
         for (const cr of childRuns) {
-          if (!cr.run_id) continue;
+          if (!cr.run_id || attachedRunIds.has(cr.run_id)) continue;
           attachedRunIds.add(cr.run_id);
-          subs.push(...buildSubFromChildRun(cr, root.id));
+          list.push(...buildSubFromChildRun(cr, root.id));
         }
-        if (subs.length > 0) {
-          childMessagesByParent.set(root.id, subs);
-        }
+        childMessagesByParent.set(root.id, list);
       }
 
-      // 阶段 2：timestamp fallback
-      // 按 chat_history user message 的时间把 assistant message 切成"回合区间"。
-      // 把所有未挂载的 child run 按 created_at 落到对应的 assistant message。
-      const allChildRuns = runs.filter(
+      // 阶段 C：timestamp fallback — 完全没匹配到的孤儿 child runs
+      const orphanChildRuns = runs.filter(
         (r) => r.parent_run_id && r.run_id && !attachedRunIds.has(r.run_id)
       );
-      if (allChildRuns.length > 0) {
-        // user messages 时间区间：[user_i.createdAt, user_{i+1}.createdAt)
-        // 每个 assistant message 落在它前面那个 user 和下一个 user 之间。
+      if (orphanChildRuns.length > 0) {
         const userTimes = messages
           .filter((m) => m.role === "user")
           .map((m) => m.createdAt)
           .sort((a, b) => a - b);
-
         const assistantMsgs = messages.filter((m) => m.role === "assistant");
         if (assistantMsgs.length > 0) {
-          const bucketByAssistant = new Map<string, AgRunResponse[]>();
-          for (const cr of allChildRuns) {
+          for (const cr of orphanChildRuns) {
             const crMs = toMs(cr.created_at);
-            // 找到包含它的 assistant：assistant_ms 在 [user_t, user_next_t) 区间内
-            // 简化：找 assistant 索引 i，使得 cr 落在 user[i] 和 user[i+1] 之间
-            // 同时要求 assistant 的 createdAt 也在这个区间内（rough sanity）
             let placed = false;
             for (let i = 0; i < userTimes.length - 1; i++) {
               const left = userTimes[i];
               const right = userTimes[i + 1];
               if (crMs >= left && crMs < right) {
-                // 找这个区间的 assistant（最接近 crMs 的 assistant）
                 const inRange = assistantMsgs.filter(
                   (a) => a.createdAt >= left && a.createdAt <= right
                 );
@@ -707,9 +980,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
                       : best
                   );
                   if (closest) {
-                    const arr = bucketByAssistant.get(closest.id) ?? [];
-                    arr.push(cr);
-                    bucketByAssistant.set(closest.id, arr);
+                    const list = childMessagesByParent.get(closest.id) ?? [];
+                    list.push(...buildSubFromChildRun(cr, closest.id));
+                    childMessagesByParent.set(closest.id, list);
                     placed = true;
                     break;
                   }
@@ -717,38 +990,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
               }
             }
             if (!placed) {
-              // 兜底：放到最后一个 assistant
               const last = assistantMsgs[assistantMsgs.length - 1];
               if (last) {
-                const arr = bucketByAssistant.get(last.id) ?? [];
-                arr.push(cr);
-                bucketByAssistant.set(last.id, arr);
+                const list = childMessagesByParent.get(last.id) ?? [];
+                list.push(...buildSubFromChildRun(cr, last.id));
+                childMessagesByParent.set(last.id, list);
               }
             }
-          }
-
-          for (const [parentId, runs2] of bucketByAssistant) {
-            const existing = childMessagesByParent.get(parentId) ?? [];
-            const subs: ChatMessage[] = [];
-            for (const cr of runs2) {
-              if (cr.run_id) attachedRunIds.add(cr.run_id);
-              subs.push(...buildSubFromChildRun(cr, parentId));
-            }
-            childMessagesByParent.set(parentId, [...existing, ...subs]);
           }
         }
       }
 
       // 把每个 root message 的 sub-messages 注入 parts[] 末尾的 marker
-      // （按 child run 时间排序，让 chip 顺序稳定）
       const finalMessages = messages.map((m) => {
         let subs = childMessagesByParent.get(m.id);
         if (!subs || subs.length === 0) return m;
-        // sort by runId（AGNO 通常包含时间信息，但不一定；先按 createdAt 排序）
         subs = [...subs].sort((a, b) => a.createdAt - b.createdAt);
 
         const next = { ...m, subMessages: subs };
-        // 在 parts[] 末尾追加对应数目的 marker；如果已经有 marker（streaming 后 reload）则跳过
         const markerIds = new Set(
           next.parts
             .filter((p) => p.type === "sub_message_marker")
