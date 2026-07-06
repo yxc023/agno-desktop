@@ -104,6 +104,21 @@ export interface ChatMessage {
   sessionId?: string;
   /** AGNO agent_id */
   agentId?: string;
+  /** AGNO team_id（sub-message 来自 team member 时） */
+  teamId?: string;
+  /**
+   * 子 agent 产出的内容，用于 team / multi-agent 场景
+   *
+   * - 当父 message 是 team 时，team 委派给 member agent，
+   *   member agent 自己的 reasoning / tool_calls / 文本会进入一个独立的 ChatMessage，
+   *   挂载到父 message 的 `subMessages[]` 上。
+   * - 嵌套多层也用同一个 `subMessages`，sub 之下可以有 sub-sub。
+   */
+  subMessages?: ChatMessage[];
+  /** 这个 message 嵌套在哪个父 message 下（仅对子 message 有效；和嵌套结构等价的扁平索引）。 */
+  parentMessageId?: string;
+  /** 显示用的名字（用于 sub-agent 块的 header），从 data.agent_name 或 instances-store 解析得到。 */
+  displayName?: string;
   /** 是否需要 HITL（agent 暂停） */
   awaitingInput?: boolean;
   /** 暂停原因 / 所需工具执行结果 */
