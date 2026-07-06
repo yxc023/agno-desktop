@@ -22,6 +22,7 @@ import { formatRelativeTime } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useChatStore } from "@/stores/chat-store";
+import { useSessionsStore } from "@/stores/sessions-store";
 import { useUIStore, findInTree } from "@/stores/ui-store";
 import { MessageContent } from "./MessageContent";
 
@@ -29,6 +30,7 @@ export function SubAgentSidePanel() {
   const stack = useUIStore((s) => s.subAgentPanel.stack);
   const close = useUIStore((s) => s.closeSubAgentPanel);
   const pop = useUIStore((s) => s.popSubAgentPanel);
+  const currentSessionId = useSessionsStore((s) => s.currentSessionId);
 
   // Esc 关闭
   useEffect(() => {
@@ -39,6 +41,15 @@ export function SubAgentSidePanel() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [stack.length, close]);
+
+  // Session switch → 关闭面板。栈顶 (subMessageId) 引用的是旧 session 的 sub-message，
+  // 留着不动会让 findInTree 返回 null、面板一直显示 "loading…"，且没有 close 路径。
+  useEffect(() => {
+    if (stack.length === 0) return;
+    if (stack[stack.length - 1].sessionId !== currentSessionId) {
+      close();
+    }
+  }, [currentSessionId, stack, close]);
 
   if (stack.length === 0) return null;
   const top = stack[stack.length - 1];
