@@ -26,6 +26,9 @@ export interface Settings {
   typewriterEffect: boolean;
   currentView: "chat" | "instances" | "settings";
   sidebarCollapsed: boolean;
+  /** ChatPage 分栏宽度（持久化）——左 sessions 栏、右 InstancesPanel 栏 */
+  chatSessionsWidth?: number;
+  chatRightWidth?: number;
 }
 
 const KEY = "agno:settings";

@@ -51,24 +51,18 @@ function UserMessage({ message, onCopy }: Props) {
   }
 
   return (
-    <div className="animate-fade-in px-4 pt-6 pb-2">
+    <div className="group animate-fade-in px-4 pt-6 pb-3">
       <div className="mx-auto max-w-3xl">
-        <div className="flex items-center gap-2 mb-1.5">
-          <div className="flex h-5 w-5 items-center justify-center rounded bg-muted/80 ring-1 ring-border">
-            <User className="h-2.5 w-2.5 text-muted-foreground" />
-          </div>
-          <span className="text-[11px] font-medium text-muted-foreground">
-            You
-          </span>
-          <span className="font-mono text-[10px] text-muted-foreground/60">
-            {formatRelativeTime(message.createdAt)}
-          </span>
-          <div className="ml-auto opacity-0 transition-opacity group-hover:opacity-100">
+        {/* Header row：右对齐（与气泡一致），让 avatar / 名字 / 时间都在右侧。
+            copy 按钮放在最左（与气泡的"主操作靠外"语义对齐）。 */}
+        <div className="mb-1.5 flex items-center justify-end gap-2">
+          <div className="opacity-0 transition-opacity group-hover:opacity-100">
             <Button
               variant="ghost"
               size="icon-sm"
               onClick={handleCopy}
               className="h-5 w-5"
+              title="复制"
             >
               {copied ? (
                 <Check className="h-3 w-3 text-success" />
@@ -77,9 +71,24 @@ function UserMessage({ message, onCopy }: Props) {
               )}
             </Button>
           </div>
+          <span className="font-mono text-[10px] text-muted-foreground/60">
+            {formatRelativeTime(message.createdAt)}
+          </span>
+          <span className="text-[11px] font-semibold text-foreground/90">
+            You
+          </span>
+          <div className="flex h-5 w-5 items-center justify-center rounded bg-primary text-primary-foreground ring-1 ring-primary/30">
+            <User className="h-2.5 w-2.5" />
+          </div>
         </div>
-        <div className="text-[13.5px] leading-[1.7] text-foreground/95">
-          <Markdown>{text}</Markdown>
+
+        {/* Bubble：右对齐，淡琥珀色背景 + 边框，凸显用户输入
+            - 不用纯色填充，避免视觉过重抢走主流程焦点
+            - 圆角采用"右下略小"，呼应"消息流向"的隐喻 */}
+        <div className="ml-auto w-fit max-w-[85%] rounded-lg rounded-br-sm border border-primary/15 bg-primary/[0.06] px-3.5 py-2.5 shadow-sm">
+          <div className="text-[13.5px] leading-[1.7] text-foreground/95">
+            <Markdown>{text}</Markdown>
+          </div>
         </div>
       </div>
     </div>
