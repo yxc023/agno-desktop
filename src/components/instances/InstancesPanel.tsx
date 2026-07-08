@@ -1,37 +1,16 @@
 import { Link } from "react-router-dom";
 import { useActiveInstance, useInstancesStore } from "@/stores/instances-store";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
-  Activity,
   Cpu,
-  Globe,
-  Terminal,
   ArrowUpRight,
-  Wifi,
   WifiOff,
   RefreshCw,
-  Keyboard,
-  Zap,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatRelativeTime } from "@/lib/utils";
 import { useChatStore } from "@/stores/chat-store";
-
-const SHORTCUTS = [
-  { keys: "⌘ K", label: "命令面板" },
-  { keys: "⌘ N", label: "新建会话" },
-  { keys: "⌘ /", label: "聚焦输入框" },
-  { keys: "⌘ ⇧ O", label: "切换实例" },
-  { keys: "Esc", label: "停止生成" },
-];
 
 export function InstancesPanel() {
   const active = useActiveInstance();
@@ -61,14 +40,22 @@ export function InstancesPanel() {
     !active.lastProbeAt || Date.now() - active.lastProbeAt > 60_000;
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-2.5">
       {/* 实例健康状态 */}
-      <section className="rounded-md border bg-card/40 p-3">
-        <div className="mb-2 flex items-center justify-between">
+      <section className="rounded-md border bg-card/40 p-2.5">
+        <div className="mb-1.5 flex items-center justify-between">
           <div className="flex items-center gap-1.5">
             <span className="relative flex h-1.5 w-1.5">
-              <span className="absolute inset-0 animate-ping rounded-full bg-success/60" />
-              <span className="relative h-1.5 w-1.5 rounded-full bg-success" />
+              <span
+                className={`absolute inset-0 animate-ping rounded-full ${
+                  isStale ? "bg-muted-foreground/40" : "bg-success/60"
+                }`}
+              />
+              <span
+                className={`relative h-1.5 w-1.5 rounded-full ${
+                  isStale ? "bg-muted-foreground/60" : "bg-success"
+                }`}
+              />
             </span>
             <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
               instance
@@ -87,61 +74,55 @@ export function InstancesPanel() {
             <RefreshCw className="h-3 w-3" />
           </Button>
         </div>
-        <div className="text-[13px] font-semibold tracking-tight">
+        <div className="text-[12.5px] font-semibold tracking-tight">
           {active.name}
         </div>
-        <div className="mt-1 truncate font-mono text-[10.5px] text-muted-foreground">
+        <div className="mt-0.5 truncate font-mono text-[10.5px] text-muted-foreground">
           {active.baseUrl}
         </div>
-        {active.token && (
-          <Badge variant="outline" className="mt-1.5 font-mono text-[9.5px]">
-            JWT auth
-          </Badge>
-        )}
+        <div className="mt-1.5 flex items-center gap-1.5 font-mono text-[10px] text-muted-foreground/70">
+          <span>AGNO {active.lastInfo?.agno_version ?? "—"}</span>
+          {active.token && (
+            <Badge variant="outline" className="font-mono text-[9px]">
+              JWT
+            </Badge>
+          )}
+        </div>
       </section>
 
-      {/* AGNO 元信息 */}
+      {/* Runtime counts（紧凑单行） */}
       <section className="rounded-md border bg-card/40">
-        <div className="flex items-center justify-between border-b px-3 py-2">
+        <div className="flex items-center justify-between border-b px-2.5 py-1.5">
           <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
             runtime
           </span>
-          {isStale ? (
+          {active.lastProbeAt && (
             <span className="font-mono text-[10px] text-muted-foreground/60">
-              stale
+              {formatRelativeTime(active.lastProbeAt)}
             </span>
-          ) : (
-            <span className="font-mono text-[10px] text-success">live</span>
           )}
         </div>
-        <div className="grid grid-cols-2 gap-px bg-border/50">
+        <div className="flex divide-x divide-border/50">
           {info ? (
             <>
-              <Stat label="AGNO" value={info.agno_version ?? "—"} mono />
-              <Stat label="agents" value={String(info.agent_count ?? 0)} mono />
-              <Stat label="teams" value={String(info.team_count ?? 0)} mono />
-              <Stat label="flows" value={String(info.workflow_count ?? 0)} mono />
+              <CountChip label="agents" value={info.agent_count ?? 0} />
+              <CountChip label="teams" value={info.team_count ?? 0} />
+              <CountChip label="flows" value={info.workflow_count ?? 0} />
             </>
           ) : (
             <>
-              <Skeleton className="h-12 rounded-none" />
-              <Skeleton className="h-12 rounded-none" />
-              <Skeleton className="h-12 rounded-none" />
-              <Skeleton className="h-12 rounded-none" />
+              <Skeleton className="h-9 flex-1 rounded-none" />
+              <Skeleton className="h-9 flex-1 rounded-none" />
+              <Skeleton className="h-9 flex-1 rounded-none" />
             </>
           )}
         </div>
-        {active.lastProbeAt && (
-          <div className="border-t px-3 py-1.5 font-mono text-[10px] text-muted-foreground/60">
-            probed {formatRelativeTime(active.lastProbeAt)}
-          </div>
-        )}
       </section>
 
-      {/* Agent 列表 */}
+      {/* Agent 列表（点击即开新会话） */}
       {active.agents && active.agents.length > 0 && (
         <section className="rounded-md border bg-card/40">
-          <div className="flex items-center justify-between border-b px-3 py-2">
+          <div className="flex items-center justify-between border-b px-2.5 py-1.5">
             <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
               agents
             </span>
@@ -149,23 +130,26 @@ export function InstancesPanel() {
               {active.agents.length}
             </span>
           </div>
-          <div className="space-y-0.5 p-1.5">
+          <div className="max-h-[40vh] space-y-0.5 overflow-y-auto p-1.5">
             {active.agents.map((a) => (
               <button
                 key={a.id}
                 onClick={() => newSession(a.id)}
                 className="group flex w-full items-center gap-2 rounded px-2 py-1.5 text-left transition-colors hover:bg-accent/30"
+                title={`新建会话：${a.name ?? a.id}`}
               >
                 <Cpu className="h-3 w-3 shrink-0 text-muted-foreground group-hover:text-accent" />
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-[12px] font-medium">
+                  <div className="truncate text-[11.5px] font-medium">
                     {a.name ?? a.id}
                   </div>
-                  <div className="truncate font-mono text-[10px] text-muted-foreground/70">
-                    {a.model && typeof a.model === "object"
-                      ? a.model.name
-                      : a.model ?? "—"}
-                  </div>
+                  {a.model && (
+                    <div className="truncate font-mono text-[10px] text-muted-foreground/70">
+                      {typeof a.model === "object"
+                        ? (a.model as any).name
+                        : a.model}
+                    </div>
+                  )}
                 </div>
                 <ArrowUpRight className="h-3 w-3 text-muted-foreground/0 group-hover:text-muted-foreground/60" />
               </button>
@@ -173,59 +157,17 @@ export function InstancesPanel() {
           </div>
         </section>
       )}
-
-      {/* 快捷键 */}
-      <section className="rounded-md border bg-card/40">
-        <div className="flex items-center gap-1.5 border-b px-3 py-2">
-          <Keyboard className="h-3 w-3 text-muted-foreground" />
-          <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-            shortcuts
-          </span>
-        </div>
-        <div className="space-y-0.5 p-1.5">
-          {SHORTCUTS.map((s) => (
-            <div
-              key={s.keys}
-              className="flex items-center justify-between rounded px-2 py-1 text-[11px] hover:bg-accent/20"
-            >
-              <span className="text-muted-foreground">{s.label}</span>
-              <kbd className="rounded border bg-muted/50 px-1.5 py-0.5 font-mono text-[9.5px] text-muted-foreground">
-                {s.keys}
-              </kbd>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* Tip */}
-      <div className="rounded-md border border-dashed bg-transparent p-3 text-[10.5px] text-muted-foreground/80">
-        <div className="flex items-center gap-1 font-mono text-accent">
-          <Zap className="h-3 w-3" />
-          <span className="uppercase tracking-wider">tip</span>
-        </div>
-        <p className="mt-1 leading-relaxed">
-          所有对话数据存于本地浏览器 localStorage，<br />切换实例时各自的 session 独立。
-        </p>
-      </div>
     </div>
   );
 }
 
-function Stat({
-  label,
-  value,
-  mono,
-}: {
-  label: string;
-  value: string;
-  mono?: boolean;
-}) {
+function CountChip({ label, value }: { label: string; value: number }) {
   return (
-    <div className="bg-card p-2.5">
-      <div className="font-mono text-[9.5px] uppercase tracking-wider text-muted-foreground/80">
+    <div className="flex-1 px-2.5 py-1.5">
+      <div className="font-mono text-[9.5px] uppercase tracking-wider text-muted-foreground/70">
         {label}
       </div>
-      <div className={`mt-0.5 text-[13px] font-semibold ${mono ? "font-mono" : ""}`}>
+      <div className="font-mono text-[12.5px] font-semibold tabular-nums">
         {value}
       </div>
     </div>
