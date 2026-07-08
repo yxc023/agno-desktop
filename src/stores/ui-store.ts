@@ -36,6 +36,15 @@ interface UIState {
   setInstanceSettingsOpen: (v: boolean) => void;
 
   /**
+   * ChatPage 右侧 InstancesPanel 是否展开。
+   * 触发器在左侧 AppShell 的 instance 卡片右上角（"更多实例信息"图标）。
+   * 默认收起，避免常驻占用横向空间。
+   */
+  instancesPanelOpen: boolean;
+  setInstancesPanelOpen: (v: boolean) => void;
+  toggleInstancesPanel: () => void;
+
+  /**
    * Sub-agent 详情面板
    *
    * 用法：在主流程的 MessageBubble 里点击 sub-agent chip →
@@ -65,6 +74,11 @@ export const useUIStore = create<UIState>((set, get) => ({
 
   instanceSettingsOpen: false,
   setInstanceSettingsOpen: (v) => set({ instanceSettingsOpen: v }),
+
+  instancesPanelOpen: false,
+  setInstancesPanelOpen: (v) => set({ instancesPanelOpen: v }),
+  toggleInstancesPanel: () =>
+    set((s) => ({ instancesPanelOpen: !s.instancesPanelOpen })),
 
   subAgentPanel: { stack: [] },
   openSubAgentPanel: (sessionId, subMessageId) => {

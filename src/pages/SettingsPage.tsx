@@ -196,7 +196,7 @@ export function SettingsPage() {
         </Card>
 
         <div className="text-center text-xs text-muted-foreground pt-4 pb-2">
-          Agno Desktop v0.1 · 数据完全保存在本地浏览器
+          Agno Desktop v0.1 · 对话从 AGNO 服务端拉取，本地仅缓存配置
         </div>
       </div>
     </div>

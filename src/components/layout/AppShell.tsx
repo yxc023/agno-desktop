@@ -8,6 +8,8 @@ import {
   ChevronsLeft,
   ChevronsRight,
   Plus,
+  PanelRightOpen,
+  PanelRightClose,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -138,25 +140,7 @@ export function AppShell() {
           {/* 底部：当前实例 + 操作 */}
           <div className="space-y-1.5 border-t border-sidebar-border p-2">
             {active && !collapsed && (
-              <button
-                onClick={() => setActive(active.id)}
-                className="group w-full rounded-md bg-sidebar-accent/60 hover:bg-sidebar-accent px-2.5 py-2 text-left transition-colors"
-              >
-                <div className="flex items-center gap-1.5">
-                  <span className="relative flex h-1.5 w-1.5">
-                    <span className="absolute inset-0 animate-ping rounded-full bg-success/60" />
-                    <span className="relative h-1.5 w-1.5 rounded-full bg-success" />
-                  </span>
-                  <span className="text-[12px] font-medium truncate">
-                    {active.name}
-                  </span>
-                </div>
-                <div className="mt-1 flex items-center gap-2 font-mono text-[10px] text-muted-foreground">
-                  <span className="truncate">{active.baseUrl.replace(/^https?:\/\//, "")}</span>
-                  <span className="text-accent">·</span>
-                  <span>{active.lastInfo?.agno_version ?? "—"}</span>
-                </div>
-              </button>
+              <ActiveInstanceCard active={active} setActive={setActive} />
             )}
 
             {!collapsed && (
@@ -207,5 +191,79 @@ export function AppShell() {
         </main>
       </div>
     </TooltipProvider>
+  );
+}
+
+/**
+ * 当前活跃实例卡片。
+ *
+ * 交互拆成两部分：
+ * - 卡片本体（点击 → 切换 / 聚焦当前实例）
+ * - 右上角 icon（点击 → toggle 右侧 InstancesPanel 抽屉）
+ *
+ * 用 div + 两个 button 而不是一个 button 包 button，是为了让两个交互
+ * 各自有独立的 a11y / focus / 键盘行为；把它们挤在一个 button 里会让
+ * 屏幕阅读器读出重复的语义、并阻止 icon 按钮获得独立 focus ring。
+ */
+function ActiveInstanceCard({
+  active,
+  setActive,
+}: {
+  active: NonNullable<ReturnType<typeof useActiveInstance>>;
+  setActive: (id: string) => void;
+}) {
+  const instancesPanelOpen = useUIStore((s) => s.instancesPanelOpen);
+  const toggleInstancesPanel = useUIStore((s) => s.toggleInstancesPanel);
+
+  return (
+    <div className="group relative rounded-md bg-sidebar-accent/60 hover:bg-sidebar-accent transition-colors">
+      <button
+        onClick={() => setActive(active.id)}
+        className="w-full rounded-md px-2.5 py-2 pr-7 text-left"
+      >
+        <div className="flex items-center gap-1.5">
+          <span className="relative flex h-1.5 w-1.5">
+            <span className="absolute inset-0 animate-ping rounded-full bg-success/60" />
+            <span className="relative h-1.5 w-1.5 rounded-full bg-success" />
+          </span>
+          <span className="text-[12px] font-medium truncate">
+            {active.name}
+          </span>
+        </div>
+        <div className="mt-1 flex items-center gap-2 font-mono text-[10px] text-muted-foreground">
+          <span className="truncate">
+            {active.baseUrl.replace(/^https?:\/\//, "")}
+          </span>
+          <span className="text-accent">·</span>
+          <span>{active.lastInfo?.agno_version ?? "—"}</span>
+        </div>
+      </button>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            onClick={toggleInstancesPanel}
+            className={cn(
+              "absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded transition-all",
+              "text-muted-foreground/50 hover:text-foreground hover:bg-foreground/10",
+              instancesPanelOpen &&
+                "bg-accent/15 text-accent hover:bg-accent/25"
+            )}
+            aria-label={
+              instancesPanelOpen ? "关闭实例详情面板" : "打开实例详情面板"
+            }
+            aria-pressed={instancesPanelOpen}
+          >
+            {instancesPanelOpen ? (
+              <PanelRightClose className="h-3 w-3" />
+            ) : (
+              <PanelRightOpen className="h-3 w-3" />
+            )}
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="right" className="font-mono text-[10px]">
+          {instancesPanelOpen ? "隐藏实例详情" : "实例详情"}
+        </TooltipContent>
+      </Tooltip>
+    </div>
   );
 }
