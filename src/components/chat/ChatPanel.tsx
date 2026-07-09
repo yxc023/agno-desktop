@@ -14,6 +14,7 @@ import {
   User,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { MessageBubble } from "./MessageBubble";
 import { MessageInput } from "./MessageInput";
 import { useChatStore, useCurrentSessionMessages } from "@/stores/chat-store";
@@ -65,7 +66,12 @@ export function ChatPanel() {
   const loadAgents = useInstancesStore((s) => s.loadAgents);
   const currentSessionId = useSessionsStore((s) => s.currentSessionId);
   const messages = useCurrentSessionMessages(currentSessionId);
-  const loadingHistory = useChatStore((s) => s.loadingHistory);
+  const loadingHistory = useChatStore((s) =>
+    currentSessionId ? s.loadingHistoryBySession[currentSessionId] ?? false : false
+  );
+  const loadedHistory = useChatStore((s) =>
+    currentSessionId ? s.loadedHistoryBySession[currentSessionId] ?? false : false
+  );
   const loadHistory = useChatStore((s) => s.loadHistory);
   const selectedAgentId = useChatStore((s) => s.selectedAgentId);
   const setSelectedAgent = useChatStore((s) => s.setSelectedAgent);
@@ -93,10 +99,13 @@ export function ChatPanel() {
   }, [active?.id, loadAgents]);
 
   useEffect(() => {
-    if (currentSessionId && messages.length === 0 && active) {
+    // 只要 session 还没拉过历史，就触发一次 loadHistory。
+    // 用 `loadedHistoryBySession` 而非 `messages.length === 0` 作为触发条件，
+    // 避免"消息为空就重新拉"的回环——同时保留对 race / LRU 过期场景的容错。
+    if (currentSessionId && active && !loadedHistory && !loadingHistory) {
       loadHistory(currentSessionId);
     }
-  }, [currentSessionId, messages.length, active, loadHistory]);
+  }, [currentSessionId, active, loadedHistory, loadingHistory, loadHistory]);
 
   useEffect(() => {
     if (autoScroll && stickToBottom && scrollRef.current) {
@@ -353,6 +362,10 @@ export function ChatPanel() {
                 </div>
               )}
             </div>
+          ) : currentSessionId && (loadingHistory || !loadedHistory) ? (
+            // 历史还没回来（或正在拉取）时显示 skeleton，
+            // 避免切到未打开过的 session 时跳一下 ChatEmptyState
+            <ChatHistorySkeleton />
           ) : (
             <ChatEmptyState
               agentName={
@@ -409,6 +422,52 @@ export function ChatPanel() {
         open={showUserIdSetup}
         onOpenChange={setShowUserIdSetup}
       />
+    </div>
+  );
+}
+
+/**
+ * History loading skeleton — 切到一个还没拉过历史的 session 时显示，
+ * 避免一闪 ChatEmptyState（用户描述的"先看到欢迎界面再切换到消息列表"问题）。
+ *
+ * 设计选择：仅显示中性 skeleton，不显示标题 / example prompt —— 因为
+ * 这些信息属于 ChatEmptyState（"还没对话内容"）的语义；这里只是"正在加载"，
+ * 用户应该看到的反馈是"在拉历史"，而不是被错误暗示"这是个空 session"。
+ */
+function ChatHistorySkeleton() {
+  return (
+    <div className="mx-auto max-w-3xl space-y-6 px-6 py-10">
+      <div className="flex items-center gap-2 font-mono text-[11px] text-muted-foreground/70">
+        <Loader2 className="h-3 w-3 animate-spin" />
+        <span>loading history…</span>
+      </div>
+      {/* User bubble skeleton */}
+      <div className="flex justify-end">
+        <Skeleton className="h-9 w-[55%]" />
+      </div>
+      {/* Assistant turn skeleton */}
+      <div className="space-y-3">
+        <Skeleton className="h-4 w-[88%]" />
+        <Skeleton className="h-4 w-[72%]" />
+        <Skeleton className="h-4 w-[40%]" />
+        {/* Tool-call card skeleton */}
+        <div className="rounded-md border bg-card/40 p-3">
+          <div className="flex items-center gap-2">
+            <Skeleton className="h-3.5 w-3.5 rounded-sm" />
+            <Skeleton className="h-3 w-32" />
+          </div>
+          <div className="mt-2 space-y-1.5">
+            <Skeleton className="h-3 w-[60%]" />
+            <Skeleton className="h-3 w-[44%]" />
+          </div>
+        </div>
+        <Skeleton className="h-4 w-[80%]" />
+        <Skeleton className="h-4 w-[35%]" />
+      </div>
+      {/* Another user bubble skeleton */}
+      <div className="flex justify-end">
+        <Skeleton className="h-9 w-[40%]" />
+      </div>
     </div>
   );
 }

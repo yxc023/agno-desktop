@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN" class="dark">
+<html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
@@ -12,6 +12,30 @@
       rel="stylesheet"
     />
     <title>Agno Desktop · 多实例 Agent 对话台</title>
+    <script>
+      // 在 React 挂载前根据 localStorage 同步设置 dark class，
+      // 避免从"默认值（dark）"切到 light 用户看到一闪的暗色。
+      try {
+        var raw = localStorage.getItem("agno:settings");
+        var theme = "dark";
+        if (raw) {
+          var s = JSON.parse(raw);
+          if (s && (s.theme === "light" || s.theme === "dark" || s.theme === "system")) {
+            theme = s.theme;
+          }
+        }
+        var effective = theme;
+        if (theme === "system") {
+          effective = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches
+            ? "dark"
+            : "light";
+        }
+        if (effective === "dark") document.documentElement.classList.add("dark");
+      } catch (e) {
+        // localStorage 读取失败：fallback 到默认暗色，避免白屏
+        document.documentElement.classList.add("dark");
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>
