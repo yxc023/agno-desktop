@@ -48,7 +48,7 @@ export interface Settings {
 const KEY = "agno:settings";
 
 const defaults: Settings = {
-  theme: "dark",
+  theme: "light",
   userId: "", // 强制用户自己设置
   userIdConfirmed: false,
   autoScroll: true,
