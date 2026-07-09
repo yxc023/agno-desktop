@@ -11,7 +11,21 @@
 import { create } from "zustand";
 import { loadJSON, saveJSON } from "@/lib/storage";
 
-export type Theme = "dark" | "light";
+export type Theme = "dark" | "light" | "system";
+
+/**
+ * 把 Theme（包含 "system"）解析成实际生效的 "dark" / "light"。
+ * "system" 时跟随 prefers-color-scheme media query。
+ */
+export function resolveTheme(theme: Theme): "dark" | "light" {
+  if (theme === "system") {
+    if (typeof window === "undefined") return "dark";
+    return window.matchMedia("(prefers-color-scheme: dark)").matches
+      ? "dark"
+      : "light";
+  }
+  return theme;
+}
 
 export interface Settings {
   theme: Theme;

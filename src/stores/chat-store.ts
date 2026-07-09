@@ -164,12 +164,24 @@ interface ChatState {
    * sub-of-sub trees benefit the most.
    */
   idIndexBySession: Record<string, Map<string, ChatMessage>>;
+  /**
+   * Per-session loading state。点击 session 后到 history 落地前的"窗口期"
+   * 内，UI 用 loadingHistoryBySession[id] 来决定渲染 skeleton 还是 empty
+   * state，避免短暂闪烁 ChatEmptyState。loadedHistoryBySession[id]
+   * 记录"至少拉过一次"——session 从未拉过历史时也按 loading 处理，
+   * 杜绝切到从未打开过的 session 时跳一下 empty state。
+   */
+  loadingHistoryBySession: Record<string, boolean>;
+  loadedHistoryBySession: Record<string, boolean>;
   /** 当前选中的 agent/team/workflow id */
   selectedAgentId: string | null;
   selectedType: "agent" | "team" | "workflow";
   /** 当前的 ChatRunner */
   runner: ChatRunner | null;
-  /** 加载状态 */
+  /**
+   * 旧的全局 loadingHistory 字段保留向后兼容（部分早期 selector
+   * 还在引用），实际渲染逻辑已切换到 loadingHistoryBySession[id]。
+   */
   loadingHistory: boolean;
   /** 最近一次 loadHistory 的错误信息（success / fallback 路径不设置）。UI 可以
    *  据此决定是否显示 banner / 提示用户"部分历史可能不完整"。 */
@@ -391,6 +403,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   loadingHistory: false,
   loadHistoryError: null,
   idIndexBySession: {},
+  loadingHistoryBySession: {},
+  loadedHistoryBySession: {},
 
   setSelectedAgent: (id, type = "agent") =>
     set({ selectedAgentId: id, selectedType: type }),
@@ -410,6 +424,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
         if (k !== sessionId) newIndex[k] = v;
       }
       newIndex[sessionId] = buildIdIndex(messages);
+      const nextLoading: Record<string, boolean> = {};
+      for (const [k, v] of Object.entries(s.loadingHistoryBySession)) {
+        if (k !== sessionId) nextLoading[k] = v;
+      }
+      nextLoading[sessionId] = false;
+      const nextLoaded: Record<string, boolean> = {};
+      for (const [k, v] of Object.entries(s.loadedHistoryBySession)) {
+        if (k !== sessionId) nextLoaded[k] = v;
+      }
+      nextLoaded[sessionId] = true;
       return {
         messagesBySession: pruneMessagesBySession(
           next,
@@ -417,6 +441,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ),
         idIndexBySession: pruneMessagesBySession(
           newIndex,
+          MESSAGES_BY_SESSION_LRU_LIMIT
+        ),
+        loadingHistoryBySession: pruneMessagesBySession(
+          nextLoading,
+          MESSAGES_BY_SESSION_LRU_LIMIT
+        ),
+        loadedHistoryBySession: pruneMessagesBySession(
+          nextLoaded,
           MESSAGES_BY_SESSION_LRU_LIMIT
         ),
       };
@@ -469,7 +501,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
   clearMessages: (sessionId) =>
     set((s) => {
       const { [sessionId]: _, ...rest } = s.messagesBySession;
-      return { messagesBySession: rest };
+      const { [sessionId]: __, ...restLoaded } = s.loadedHistoryBySession;
+      const { [sessionId]: ___, ...restLoading } = s.loadingHistoryBySession;
+      return {
+        messagesBySession: rest,
+        loadedHistoryBySession: restLoaded,
+        loadingHistoryBySession: restLoading,
+      };
     }),
 
   loadHistory: async (sessionId) => {
@@ -482,7 +520,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // 直接 no-op，避免慢请求覆盖快请求的 state。
     const myGen = (loadHistoryGeneration.get(sessionId) ?? 0) + 1;
     loadHistoryGeneration.set(sessionId, myGen);
-    set({ loadingHistory: true, loadHistoryError: null });
+    set((s) => ({
+      loadingHistory: true,
+      loadHistoryError: null,
+      loadingHistoryBySession: {
+        ...s.loadingHistoryBySession,
+        [sessionId]: true,
+      },
+    }));
     try {
       // 并行拉取 session 详情和 runs。getSessionRuns 失败时仍继续
       // （chat_history 本身是 OK 的，只是 sub-agent 历史会缺），但暴露
@@ -1352,7 +1397,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
     } finally {
       if (loadHistoryGeneration.get(sessionId) === myGen) {
-        set({ loadingHistory: false });
+        set((s) => ({
+          loadingHistory: false,
+          loadingHistoryBySession: {
+            ...s.loadingHistoryBySession,
+            [sessionId]: false,
+          },
+          loadedHistoryBySession: {
+            ...s.loadedHistoryBySession,
+            [sessionId]: true,
+          },
+        }));
       }
     }
   },

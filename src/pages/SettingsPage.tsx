@@ -1,4 +1,4 @@
-import { useSettingsStore } from "@/stores/settings-store";
+import { useSettingsStore, type Theme } from "@/stores/settings-store";
 import {
   Card,
   CardContent,
@@ -11,12 +11,23 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { AlertTriangle, User, RotateCcw, Copy } from "lucide-react";
+import {
+  AlertTriangle,
+  User,
+  RotateCcw,
+  Copy,
+  Sun,
+  Moon,
+  Monitor,
+  Palette,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
 import { useState } from "react";
 
 export function SettingsPage() {
   const {
     userId,
+    theme,
     autoScroll,
     showToolDetails,
     collapseReasoning,
@@ -146,6 +157,43 @@ export function SettingsPage() {
 
         <Card>
           <CardHeader>
+            <CardTitle className="text-base flex items-center gap-2">
+              <Palette className="h-4 w-4 text-accent" />
+              外观
+            </CardTitle>
+            <CardDescription>
+              选择浅色或深色主题，跟随系统则按 OS 偏好自动切换。
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-3 gap-2">
+              <ThemeOption
+                value="light"
+                current={theme}
+                onSelect={(v) => update({ theme: v })}
+                icon={Sun}
+                label="浅色"
+              />
+              <ThemeOption
+                value="dark"
+                current={theme}
+                onSelect={(v) => update({ theme: v })}
+                icon={Moon}
+                label="深色"
+              />
+              <ThemeOption
+                value="system"
+                current={theme}
+                onSelect={(v) => update({ theme: v })}
+                icon={Monitor}
+                label="跟随系统"
+              />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
             <CardTitle className="text-base">对话偏好</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -224,5 +272,51 @@ function ToggleRow({
       </div>
       <Switch checked={checked} onCheckedChange={onCheckedChange} />
     </div>
+  );
+}
+
+/**
+ * 主题选项卡片：浅色 / 深色 / 跟随系统。
+ * - 选中态用 accent 描边 + 淡琥珀底
+ * - icon + label 居中展示，方便用户一眼看全三种状态
+ */
+function ThemeOption({
+  value,
+  current,
+  onSelect,
+  icon: Icon,
+  label,
+}: {
+  value: Theme;
+  current: Theme;
+  onSelect: (v: Theme) => void;
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+}) {
+  const active = current === value;
+  return (
+    <button
+      onClick={() => onSelect(value)}
+      aria-pressed={active}
+      className={cn(
+        "group flex flex-col items-center gap-2 rounded-md border px-3 py-3 transition-all",
+        active
+          ? "border-accent/50 bg-accent/[0.06] text-foreground"
+          : "border-border bg-card/30 text-muted-foreground hover:border-accent/30 hover:text-foreground"
+      )}
+    >
+      <Icon
+        className={cn(
+          "h-5 w-5 transition-colors",
+          active ? "text-accent" : "text-muted-foreground group-hover:text-foreground"
+        )}
+      />
+      <span className="text-[12px] font-medium">{label}</span>
+      {active && (
+        <span className="font-mono text-[9.5px] uppercase tracking-wider text-accent/80">
+          active
+        </span>
+      )}
+    </button>
   );
 }
