@@ -23,6 +23,7 @@ import { useSettingsStore } from "@/stores/settings-store";
 import { useActiveInstance, useInstancesStore } from "@/stores/instances-store";
 import { Logo, LogoText } from "@/components/common/Logo";
 import { useUIStore } from "@/stores/ui-store";
+import { InstanceFormDialog } from "@/components/instances/InstanceFormDialog";
 
 interface NavItem {
   to: string;
@@ -103,6 +104,9 @@ export function AppShell() {
   const setActive = useInstancesStore((s) => s.setActiveInstance);
   const instances = useInstancesStore((s) => s.instances);
   const setShowAdd = useUIStore((s) => s.setShowAddInstance);
+  // 把 showAddInstance 也订阅一份，让 AppShell 跟随这个状态而 re-render
+  // ——这是把 dialog 提到全局的关键。
+  const showAdd = useUIStore((s) => s.showAddInstance);
 
   return (
     <TooltipProvider delayDuration={500}>
@@ -190,6 +194,20 @@ export function AppShell() {
           <Outlet />
         </main>
       </div>
+
+      {/* InstanceFormDialog 提到 AppShell 全局渲染：
+          左侧导航 / 各页面的"添加实例"按钮都通过 useUIStore.showAddInstance
+          触发，但弹层组件本身只挂一份（不然每条路由都重复一份会重复触发
+          探活请求）。这里读 showAdd 是为了让切到 /instances 时 dialog
+          也能正确显示（之前 dialog 只在 InstancesPage 里渲染）。 */}
+      <InstanceFormDialog
+        open={showAdd}
+        onOpenChange={setShowAdd}
+        onSuccess={(id) => {
+          setShowAdd(false);
+          setActive(id);
+        }}
+      />
     </TooltipProvider>
   );
 }

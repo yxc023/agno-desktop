@@ -209,6 +209,14 @@ function clampWidth(value: number, min: number, max: number): number {
  *   "是不是没拖到"——拖动操作正常，1px 边框就是稳定的视觉锚点）
  * - 双击触发重置
  * - 用更大的 hit area（-left-1 -right-1）让鼠标更容易命中
+ *
+ * 拖动期间防文本选择：
+ * - onMouseDown 调 e.preventDefault() 阻止浏览器在 mousedown 那一刻
+ *   启动文字选区（这是 useEffect 跑之前浏览器默认会做的事）
+ * - 同时把 userSelect='none' / cursor='col-resize' 直接同步设到 body，
+ *   不依赖 useEffect 后置设置——这样即使快速拖动也不会有"先选了一段
+ *   文字才开始拖"的体验断层。
+ * - select-none 兜底（部分浏览器对 SVG / 子元素的默认选择行为兜不住）
  */
 function ResizeHandle({
   onMouseDown,
@@ -227,10 +235,18 @@ function ResizeHandle({
       aria-orientation="vertical"
       aria-label={ariaLabel}
       title="拖动调整宽度 · 双击重置"
-      onMouseDown={onMouseDown}
+      onMouseDown={(e) => {
+        // 阻止浏览器默认行为：从 mousedown 那一刻起的文本选择
+        e.preventDefault();
+        // 同步设上 user-select / cursor，不依赖 useEffect（避免"先选了一段字
+        // 才进 drag 模式"的闪烁）。ChatPage 的 mouseup 会清掉这两个值。
+        document.body.style.userSelect = "none";
+        document.body.style.cursor = "col-resize";
+        onMouseDown(e);
+      }}
       onDoubleClick={onDoubleClick}
       onMouseUp={onMouseUp}
-      className="relative w-px shrink-0 cursor-col-resize bg-border hover:bg-accent/40"
+      className="relative w-px shrink-0 select-none cursor-col-resize bg-border hover:bg-accent/40"
     >
       {/* hit area: 扩大到 -left-1 -right-1，让 8px 范围内都能命中 */}
       <div className="pointer-events-none absolute inset-y-0 -left-1 -right-1" />
