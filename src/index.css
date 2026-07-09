@@ -12,6 +12,23 @@
    灵感：Linear 的信息密度 × Raycast 的命令调色 × 终端的 monospace
    ========================================================================== */
 
+/*
+ * Radix ScrollArea 默认给 [data-radix-scroll-area-viewport] 注入
+ * `min-width: 100%; display: table;` 让 viewport 跟随内容撑开。
+ * 这在固定宽度侧栏（sessions 列表）里是 bug —— 长 title 会把 viewport
+ * 撑到 540+px，overflow-x: hidden 截断后看起来像「文字突兀贴边」。
+ *
+ * 用 min-width: 0 强制 viewport 遵守父容器宽度，由父容器的 overflow-hidden
+ * 截断内部溢出。Viewport 内层 table wrapper 也得一起覆盖。
+ */
+[data-radix-scroll-area-viewport] {
+  min-width: 0 !important;
+  display: block !important;
+}
+[data-radix-scroll-area-viewport] > div {
+  display: block !important;
+}
+
 :root {
   /* 表面层级（暖灰） */
   --background: 36 16% 97%;

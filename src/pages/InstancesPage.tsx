@@ -41,7 +41,6 @@ export function InstancesPage() {
   const setActive = useInstancesStore((s) => s.setActiveInstance);
   const remove = useInstancesStore((s) => s.removeInstance);
   const probe = useInstancesStore((s) => s.probeInstance);
-  const showAdd = useUIStore((s) => s.showAddInstance);
   const setShowAdd = useUIStore((s) => s.setShowAddInstance);
   const [editInstance, setEditInstance] = useState<AgnoInstance | null>(null);
 
@@ -122,15 +121,9 @@ export function InstancesPage() {
         </Card>
       </div>
 
-      <InstanceFormDialog
-        open={showAdd}
-        onOpenChange={setShowAdd}
-        onSuccess={(id) => {
-          setShowAdd(false);
-          setActive(id);
-        }}
-      />
-
+      {/* "添加实例" dialog 已在 AppShell 全局挂载（统一管理 showAddInstance
+          状态，避免每条路由重复一份 dialog 互相打架）。
+          这里只剩"编辑现有实例"dialog，与左侧"添加实例"是独立的两条路径。 */}
       <InstanceFormDialog
         open={!!editInstance}
         instance={editInstance ?? undefined}

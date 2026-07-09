@@ -138,7 +138,16 @@ export function SessionList() {
 
       {/* List */}
       <ScrollArea className="flex-1">
-        <div className="space-y-0.5 p-1.5">
+        {/*
+         * min-w-0 + overflow-hidden：内部 div 必须在 Viewport (259px) 内。
+         * 否则长 title 撑出来的 SessionItem 会把 inner div 撑到 540+px，
+         * 用户看到的是 viewport overflow-x: hidden 截断后的"突兀贴边"。
+         * overflow-hidden 是真正的杀手锏 —— 阻止 SessionItem 的 min-content
+         * 把 inner div 反向撑大。
+         */}
+        <div
+          className="min-w-0 space-y-0.5 overflow-hidden p-1.5"
+        >
           {loadError && (
             <div className="m-1.5 space-y-1.5 rounded-md border border-destructive/40 bg-destructive/[0.04] p-2.5">
               <div className="flex items-start gap-1.5 font-mono text-[10.5px] text-destructive">
@@ -295,7 +304,14 @@ function SessionItem({
       onClick={onClick}
       style={{ animationDelay: `${Math.min(index * 30, 300)}ms` }}
       className={cn(
-        "group relative cursor-pointer animate-fade-in rounded-md px-2.5 py-2 transition-all",
+        // min-w-0 + overflow-hidden 双重保险：父容器是 ScrollArea Viewport，
+        // 宽度受 aside (260px) 约束。SessionItem 在 flex column 里默认
+        // min-width: auto，意味着会按内容撑到 "长 title + dropdown + padding" 的
+        // 自然宽度，可能超过 260px 让右侧 dropdown 跑到 aside 外被 viewport
+        // overflow-x: hidden 截掉——长名字 truncate 后 ellipsis 紧贴右边框
+        // 就是这个布局 bug 的视觉表现。min-w-0 让 item 跟随父容器宽度，
+        // overflow-hidden 兜底任何内部的溢出。
+        "group relative min-w-0 cursor-pointer animate-fade-in overflow-hidden rounded-md px-2.5 py-2 transition-all",
         active
           ? "bg-sidebar-accent"
           : "hover:bg-sidebar-accent/50"
@@ -304,7 +320,7 @@ function SessionItem({
       {active && (
         <span className="absolute left-0 top-1/2 h-5 w-[2px] -translate-y-1/2 rounded-r-full bg-accent" />
       )}
-      <div className="flex items-start justify-between gap-1">
+      <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
           <div
             className={cn(
@@ -334,11 +350,23 @@ function SessionItem({
           </div>
         </div>
 
+        {/*
+         * 右侧 dropdown 按钮始终保留可见（低不透明 /35 默认，hover / group-hover
+         * 时变深）。原来用 text-muted-foreground/0 完全透明，结果就是：
+         * - 用户没意识到这一行可以点出菜单
+         * - 长名字 truncate 后视觉上是 "text + 24px 空隙 + border"，缺一个
+         *   affordance 把空隙"解释"掉，看着很生硬
+         *
+         * 现在按钮默认就是淡淡可见的 3 个点，相当于在右侧充当"占位 + 提示"
+         * 的角色，长名字 truncate 后视觉链路变成 "text + 4px gap + ⋯ + border"，
+         * 整体感觉是「这是被截断了，后面还有操作」，而不是「突兀地切了」。
+         */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button
               onClick={(e) => e.stopPropagation()}
-              className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground/0 transition-all hover:bg-foreground/10 hover:text-muted-foreground group-hover:text-muted-foreground/60"
+              aria-label="会话操作"
+              className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground/40 transition-all hover:bg-foreground/10 hover:text-foreground group-hover:text-muted-foreground"
             >
               <MoreHorizontal className="h-3 w-3" />
             </button>
