@@ -14,10 +14,10 @@
     <title>Agno Desktop · 多实例 Agent 对话台</title>
     <script>
       // 在 React 挂载前根据 localStorage 同步设置 dark class，
-      // 避免从"默认值（dark）"切到 light 用户看到一闪的暗色。
+      // 避免从默认值切到另一主题时用户看到一闪的不协调色。
       try {
         var raw = localStorage.getItem("agno:settings");
-        var theme = "dark";
+        var theme = "light";
         if (raw) {
           var s = JSON.parse(raw);
           if (s && (s.theme === "light" || s.theme === "dark" || s.theme === "system")) {
@@ -32,8 +32,7 @@
         }
         if (effective === "dark") document.documentElement.classList.add("dark");
       } catch (e) {
-        // localStorage 读取失败：fallback 到默认暗色，避免白屏
-        document.documentElement.classList.add("dark");
+        // localStorage 读取失败：fallback 到默认浅色
       }
     </script>
   </head>
