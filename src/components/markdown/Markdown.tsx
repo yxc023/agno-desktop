@@ -5,6 +5,7 @@ import rehypeRaw from "rehype-raw";
 import rehypeHighlight from "rehype-highlight";
 import { cn } from "@/lib/utils";
 import { CodeBlock } from "./CodeBlock";
+import { openExternalUrl } from "@/lib/open-external-url";
 
 interface Props {
   children: string;
@@ -58,7 +59,21 @@ export function Markdown({ children, className, streaming }: Props) {
           },
           a({ href, children }) {
             return (
-              <a href={href} target="_blank" rel="noreferrer">
+              <a
+                href={href}
+                target="_blank"
+                rel="noreferrer"
+                onClick={(e) => {
+                  // Tauri Webview 默认拦截 target=_blank，要么在 webview 内
+                  // 开新 tab 要么静默失败。preventDefault 后调 shell.open
+                  // 走系统默认浏览器，体验与"普通浏览器"一致。
+                  // 保留 href + target 让 dev 工具 / 浏览器环境（裸 vite）
+                  // 仍能 hover/copy/中键新窗口打开。
+                  e.preventDefault();
+                  e.stopPropagation();
+                  void openExternalUrl(href);
+                }}
+              >
                 {children}
               </a>
             );
