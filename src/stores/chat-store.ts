@@ -15,7 +15,7 @@ import { displayNameForRun } from "@/lib/agent-name";
 import { useInstancesStore } from "./instances-store";
 import { useSessionsStore } from "./sessions-store";
 import { generateId } from "@/lib/utils";
-import type { AgRunResponse } from "@/lib/agno-types";
+import type { AgChatMessage, AgRunResponse } from "@/lib/agno-types";
 
 function safeParse(s: string): any {
   try {
@@ -23,6 +23,87 @@ function safeParse(s: string): any {
   } catch {
     return s;
   }
+}
+
+/**
+ * 从 runs[] 重建一份 fallback 的 AgChatMessage[]，用于 chat_history 缺失时。
+ *
+ * 触发场景（AGNO server 端在某些 session 上没把 chat_history 持久化进数据库，
+ * 但 run 的 content / events 都正常存了）：
+ *   - workflow / multi-step session 命中率更高
+ *   - 现象：detail.chat_history === [] 但 runs.length > 0
+ *   - 结果：UI 永远显示 "empty chat"，用户看不到已有答案
+ *
+ * 算法：
+ *   1. 对每个 run：
+ *      - 优先用 run.content（AGNO 已经把完整输出存到了 run 顶层）；
+ *        验证过它 === RunContent events 拼起来的结果，不会丢信息。
+ *      - 退路：聚合该 run_id 的 RunContent events 拼字符串。
+ *      - 都没有 → 这个 run 跳过（events 流不完整，不强造空内容）。
+ *   2. 按 createdAt 升序。
+ *   3. 拼成 AgChatMessage（id 用 run_id，方便后续 sub-agent 重建的 runId 匹配
+ *      找到 root message 把 sub-agent 挂上）。
+ *
+ * 注意：**不构造 user 消息**——run_input 也常常为 null，瞎猜一个 user message
+ * 反而误导。fallback 模式允许"只看到 assistant 答案"，至少比"什么都看不到"强。
+ */
+function buildFallbackHistoryFromRuns(
+  runs: AgRunResponse[]
+): AgChatMessage[] {
+  // 按 run_id 聚合 RunContent events（兜底用）
+  const streamedByRun = new Map<string, string[]>();
+  for (const r of runs) {
+    for (const ev of r.events ?? []) {
+      if (ev?.event === "RunContent") {
+        const rid = ev.run_id;
+        const c = ev.content;
+        if (rid && typeof c === "string" && c.length > 0) {
+          let arr = streamedByRun.get(rid);
+          if (!arr) {
+            arr = [];
+            streamedByRun.set(rid, arr);
+          }
+          arr.push(c);
+        }
+      }
+    }
+  }
+
+  // 顶层 run.content 已经把 RunCompleted 的 content 持久化过（agentOS 在 run 落库
+  // 时把流拼好再写）。这里直接用，省一次聚合 + 对 content_type='str' 的内容更准。
+  const out: AgChatMessage[] = [];
+  const sorted = [...runs].sort((a, b) => toMs(a.created_at) - toMs(b.created_at));
+  for (const r of sorted) {
+    if (!r.run_id) continue;
+
+    let content: any = undefined;
+    // 1) 顶层 content：非空字符串 或 非空对象（str/structured）
+    if (r.content != null && r.content !== "") {
+      content = r.content;
+    } else {
+      // 2) 聚合 events
+      const streamed = streamedByRun.get(r.run_id);
+      if (streamed && streamed.length > 0) {
+        content = streamed.join("");
+      }
+    }
+    if (content === undefined) continue;
+
+    const createdAt = toMs(r.created_at) || Date.now();
+    out.push({
+      id: r.run_id,
+      role: "assistant",
+      content,
+      created_at: createdAt,
+      // 给 happy path 里 metrics / reasoning 的解析留钩子
+      reasoning_content: r.reasoning_content || undefined,
+      reasoning_steps: r.reasoning_steps || undefined,
+      metrics: r.metrics,
+      // 顶层 run 还可能带 tool_calls（agent 调工具的场景）——原样透传
+      tool_calls: r.messages?.flatMap((m) => m.tool_calls ?? []).filter(Boolean) || undefined,
+    });
+  }
+  return out;
 }
 
 /* ------------------------------------------------------------------ */
@@ -556,6 +637,29 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
       const history = detail.chat_history ?? [];
 
+      // chat_history 缺失 fallback：AGNO 服务端在某些 session（多为 workflow / 多步
+      // session）上没把 chat_history 持久化进 DB，但 runs[].content 和 events 都在。
+      // 旧逻辑会直接落到 "empty chat" 状态——用户看到空对话但实际后端有完整答案。
+      // 这里合成一份 history，让现有 happy path（含 sub-agent 重建）自然跑起来。
+      // user message 我们没法恢复（run_input 经常也是 null），所以 fallback 模式
+      // 会看到"只有 assistant 答案"——比"什么都看不到"好太多。
+      const hasRealHistory = history.length > 0;
+      const effectiveHistory: AgChatMessage[] = hasRealHistory
+        ? history
+        : runs.length > 0
+        ? buildFallbackHistoryFromRuns(runs)
+        : history;
+      if (!hasRealHistory && effectiveHistory.length > 0) {
+        // console.warn 让 dev 在排查"点进 session 看到的内容比预期少"时能立刻
+        // 定位是 server 端持久化缺口（不是前端 bug）。
+        if (typeof console !== "undefined") {
+          console.warn(
+            "loadHistory: chat_history missing, fell back to runs[] (server-side persistence gap)",
+            { sessionId, runsCount: runs.length, fallbackMsgs: effectiveHistory.length }
+          );
+        }
+      }
+
       // 索引：run_id -> run 对象（用于拿 reasoning_content 等）
       const runById = new Map<string, AgRunResponse>();
       for (const r of runs) {
@@ -591,7 +695,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
       };
 
-      for (const m of history) {
+      for (const m of effectiveHistory) {
         const role = (m.role as ChatMessage["role"]) ?? "assistant";
         const parts: MessagePart[] = [];
 
