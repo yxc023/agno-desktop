@@ -3,6 +3,7 @@ import { Send, Paperclip, X, Square, Loader2, FileText, AlertTriangle, User } fr
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { shouldSendOnEnter } from "@/lib/ime-composing";
 import { useChatStore } from "@/stores/chat-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { UserIdSetupDialog } from "@/components/common/UserIdSetupDialog";
@@ -19,6 +20,16 @@ export function MessageInput() {
   const [showUserIdSetup, setShowUserIdSetup] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // IME composition 状态：
+  // - 中文 / 日文 / 韩文输入法在用户输入拼音 / 假名 / 谚文时会进入
+  //   composition 状态，此时按 Enter 是"确认候选词"，不是"提交消息"。
+  // - 用 ref 而不是 state 是因为 keydown 回调里要同步读到最新值，
+  //   setState 的批处理会让 callback 里读到陈旧值。
+  // - 在 handleKeyDown 里再叠加 e.nativeEvent.isComposing / keyCode===229
+  //   三层判定（见 shouldSendOnEnter 的注释），覆盖老 Safari/iOS Gboard
+  //   等边界情况。
+  const composingRef = useRef(false);
 
   const userId = useSettingsStore((s) => s.userId);
   const userIdConfirmed = useSettingsStore((s) => s.userIdConfirmed);
@@ -56,10 +67,18 @@ export function MessageInput() {
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === "Enter" && !e.shiftKey) {
+    if (shouldSendOnEnter(e, composingRef)) {
       e.preventDefault();
       handleSend();
     }
+  }
+
+  function handleCompositionStart() {
+    composingRef.current = true;
+  }
+
+  function handleCompositionEnd() {
+    composingRef.current = false;
   }
 
   function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
@@ -127,6 +146,8 @@ export function MessageInput() {
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={handleKeyDown}
+            onCompositionStart={handleCompositionStart}
+            onCompositionEnd={handleCompositionEnd}
             placeholder={
               isRunning
                 ? "Agent 正在响应…"
