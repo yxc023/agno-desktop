@@ -52,7 +52,7 @@ function UserMessage({ message, onCopy }: Props) {
 
   return (
     <div className="group animate-fade-in px-4 pt-6 pb-3">
-      <div className="mx-auto max-w-3xl">
+      <div className="mx-auto max-w-4xl">
         {/* Header row：右对齐（与气泡一致），让 avatar / 名字 / 时间都在右侧。
             copy 按钮放在最左（与气泡的"主操作靠外"语义对齐）。 */}
         <div className="mb-1.5 flex items-center justify-end gap-2">
@@ -124,7 +124,7 @@ function AssistantMessage({ message, onCopy }: Props) {
         isStreaming && "border-l-2 border-accent/30"
       )}
     >
-      <div className="mx-auto max-w-3xl">
+      <div className="mx-auto max-w-4xl">
         <MessageContent
           message={message}
           onOpenSubAgent={(id) =>
@@ -282,7 +282,7 @@ function MessageFooter({
 function SystemMessage({ message }: Props) {
   return (
     <div className="border-y border-dashed border-border bg-muted/30 px-4 py-2 font-mono text-[11px] text-muted-foreground">
-      <div className="mx-auto max-w-3xl">
+      <div className="mx-auto max-w-4xl">
         {message.parts
           .map((p) => (p.type === "text" ? p.text : ""))
           .filter(Boolean)

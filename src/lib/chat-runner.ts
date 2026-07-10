@@ -35,6 +35,12 @@ export interface ChatRunnerCallbacks {
   onRunError?: (runId: string, error: string) => void;
   onRunPaused?: (runId: string, info: ChatMessage["pauseInfo"]) => void;
   onChunk?: (text: string) => void;
+  /**
+   * 每次 LLM 调用完成时触发（AGNO ModelRequestCompleted 事件）。
+   * inputTokens 是该次调用的精确 token 数（per-call），不是 run 内的累加。
+   * 用于 context 进度条：取"最后一次"的值即可得到"当前 context size"。
+   */
+  onModelRequestCompleted?: (inputTokens: number) => void;
   /** 一个新的 sub-agent message 被创建（用于在 store 里预先占位等）。 */
   onSubMessageCreated?: (parentMessageId: string, sub: ChatMessage) => void;
   /** sub 消息的最终化（completed/error/cancelled），用于聚合状态。 */
@@ -527,6 +533,17 @@ export class ChatRunner {
       case "RunCompleted": {
         if (data.metrics) target.metrics = data.metrics;
         if (target.status !== "paused") target.status = "completed";
+        break;
+      }
+
+      case "ModelRequestCompleted": {
+        // AGNO 在每次 LLM 调用完成后发的事件，含 per-call input_tokens。
+        // 这是"单次 context size"——比 run.metrics.input_tokens（累加）更准。
+        // chat-store 的 onModelRequestCompleted 回调把它写到
+        // latestInputTokensBySession，供 ContextProgressBar 读取。
+        if (typeof data.input_tokens === "number") {
+          callbacks.onModelRequestCompleted?.(data.input_tokens);
+        }
         break;
       }
 

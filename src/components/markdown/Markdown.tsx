@@ -23,6 +23,7 @@ export function Markdown({ children, className, streaming }: Props) {
         "prose-h1:text-lg prose-h2:text-base prose-h3:text-sm",
         "prose-p:leading-relaxed prose-p:my-2",
         "prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5",
+        "prose-hr:my-2 prose-hr:border-border",
         "prose-pre:my-0 prose-pre:p-0 prose-pre:bg-transparent",
         "prose-code:before:content-none prose-code:after:content-none",
         "prose-blockquote:border-l-2 prose-blockquote:border-border prose-blockquote:pl-3 prose-blockquote:italic",

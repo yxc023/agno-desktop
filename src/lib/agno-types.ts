@@ -243,6 +243,26 @@ export interface AgRunResponse {
   content_index?: number;
   event_index?: number;
   error?: string;
+
+  /**
+   * ModelRequestCompleted 事件携带的 per-call 字段（每次 LLM 调用一发）：
+   * - input_tokens/output_tokens/total_tokens: 该次调用的精确 token 数
+   *   （注意跟 metrics.input_tokens 区别——后者是 run 内所有 LLM 调用累加）
+   * - model/model_provider: 调用的模型标识
+   * - time_to_first_token: 首 token 延迟（秒）
+   * - cache_read_tokens / cache_write_tokens: 缓存命中 token
+   * - reasoning_tokens: 推理 token
+   * 文档：agno/run/agent.py 的 ModelRequestCompletedEvent
+   */
+  input_tokens?: number;
+  output_tokens?: number;
+  total_tokens?: number;
+  model?: string;
+  model_provider?: string;
+  time_to_first_token?: number;
+  cache_read_tokens?: number;
+  cache_write_tokens?: number;
+  reasoning_tokens?: number;
 }
 
 /**
