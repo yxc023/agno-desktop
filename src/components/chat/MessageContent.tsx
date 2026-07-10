@@ -21,6 +21,7 @@ import {
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import { Markdown } from "@/components/markdown/Markdown";
+import { openExternalUrl } from "@/lib/open-external-url";
 import { ReasoningBlock } from "./ReasoningBlock";
 import { ToolCallCard } from "./ToolCallCard";
 import { useChatStore, useSubMessageById } from "@/stores/chat-store";
@@ -138,6 +139,13 @@ function PartRenderer({
                 href={ref.url}
                 target="_blank"
                 rel="noreferrer"
+                onClick={(e) => {
+                  // 同 Markdown.tsx：Tauri Webview 不接管 target=_blank，
+                  // 统一走 shell.open 跳系统默认浏览器。
+                  e.preventDefault();
+                  e.stopPropagation();
+                  void openExternalUrl(ref.url);
+                }}
                 className="block rounded px-2 py-1.5 transition-colors hover:bg-info/[0.06]"
               >
                 <div className="font-mono text-[10px] text-info/80">

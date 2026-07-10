@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CodeBlock } from "@/components/markdown/CodeBlock";
+import { openExternalUrl } from "@/lib/open-external-url";
 import type { ToolCallPart } from "@/lib/message-types";
 import { Badge } from "@/components/ui/badge";
 
@@ -296,6 +297,13 @@ function ResultRenderer({ result, toolName }: { result: any; toolName: string })
               href={r.url}
               target="_blank"
               rel="noreferrer"
+              onClick={(e) => {
+                // web_search 工具返回的搜索结果链接：同样走 shell.open 跳系统
+                // 默认浏览器，避免 Tauri Webview 拦截 target=_blank。
+                e.preventDefault();
+                e.stopPropagation();
+                void openExternalUrl(r.url);
+              }}
               className="group/link flex gap-2.5 rounded border border-border/40 px-2.5 py-2 transition-colors hover:border-accent/40 hover:bg-accent/[0.04]"
             >
               <span className="font-mono text-[10px] text-muted-foreground/50 group-hover/link:text-accent">
