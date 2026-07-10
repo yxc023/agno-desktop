@@ -17,7 +17,8 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { MessageBubble } from "./MessageBubble";
 import { MessageInput } from "./MessageInput";
-import { useChatStore, useCurrentSessionMessages } from "@/stores/chat-store";
+import { ContextProgressBar } from "./ContextProgressBar";
+import { useChatStore, useCurrentSessionMessages, useLatestInputTokens } from "@/stores/chat-store";
 import { useSessionsStore } from "@/stores/sessions-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import {
@@ -66,6 +67,7 @@ export function ChatPanel() {
   const loadAgents = useInstancesStore((s) => s.loadAgents);
   const currentSessionId = useSessionsStore((s) => s.currentSessionId);
   const messages = useCurrentSessionMessages(currentSessionId);
+  const currentInputTokens = useLatestInputTokens(currentSessionId);
   const loadingHistory = useChatStore((s) =>
     currentSessionId ? s.loadingHistoryBySession[currentSessionId] ?? false : false
   );
@@ -123,6 +125,9 @@ export function ChatPanel() {
   const isRunning = runner?.isRunning() ?? false;
   const agentsError = active.lastAgentsError;
   const needUserId = !userId.trim() || !userIdConfirmed;
+  // 当前选中的 agent（用来读 model id → 查 context window）
+  const selectedAgent =
+    agents.find((a) => a.id === selectedAgentId) ?? agents[0] ?? null;
 
   return (
     <div className="flex h-full flex-col">
@@ -310,6 +315,12 @@ export function ChatPanel() {
           </button>
         )}
 
+        {/* Context 进度（圆环）：18px SVG 圆环，hover 弹 tooltip 显示数字 */}
+        <ContextProgressBar
+          currentTokens={currentInputTokens}
+          agent={selectedAgent}
+        />
+
         <div className="flex items-center gap-1.5">
           {needUserId && (
             <Button
@@ -352,7 +363,7 @@ export function ChatPanel() {
           className="absolute inset-0 overflow-y-auto"
         >
           {currentSessionId && messages.length > 0 ? (
-            <div className="mx-auto max-w-3xl py-6">
+            <div className="mx-auto max-w-4xl py-6">
               {messages.map((m, i) => (
                 <MessageBubble key={m.id} message={m} />
               ))}
@@ -436,7 +447,7 @@ export function ChatPanel() {
  */
 function ChatHistorySkeleton() {
   return (
-    <div className="mx-auto max-w-3xl space-y-6 px-6 py-10">
+    <div className="mx-auto max-w-4xl space-y-6 px-6 py-10">
       <div className="flex items-center gap-2 font-mono text-[11px] text-muted-foreground/70">
         <Loader2 className="h-3 w-3 animate-spin" />
         <span>loading history…</span>

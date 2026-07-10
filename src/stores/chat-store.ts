@@ -269,8 +269,31 @@ interface ChatState {
   loadHistoryError: string | null;
 
   setSelectedAgent: (id: string | null, type?: "agent" | "team" | "workflow") => void;
+  /**
+   * 每个 session 的"最新一次 LLM 调用的 input_tokens"（per-call）。
+   *
+   * 跟 `message.metrics.input_tokens` 的关键区别：
+   * - message.metrics.input_tokens = AGNO run 级累加（一次 turn 内 N 次
+   *   LLM 调用的 input 累加），会被合并/求和放大 N 倍
+   * - latestInputTokensBySession[id] = 最后一次 LLM 调用的精确值
+   *   （AGNO ModelRequestCompleted 事件带），等于"当前 context size"
+   *
+   * 数据来源：
+   *   - streaming 期间：ChatRunner 通过 onModelRequestCompleted callback
+   *     实时上报
+   *   - 加载历史时：从 runs[latest].messages 里找最后一个 assistant 的
+   *     per-call metrics.input_tokens
+   */
+  latestInputTokensBySession: Record<string, number>;
   setMessages: (sessionId: string, messages: ChatMessage[]) => void;
   appendMessage: (sessionId: string, message: ChatMessage) => void;
+  /**
+   * 写入 / 清空某个 session 的"最新一次 LLM 调用的 input_tokens"。
+   * runner 通过 onModelRequestCompleted 在每次 LLM 调用完成后回调；
+   * loadHistory 在读到 runs[].messages[].metrics.input_tokens 时也调一次。
+   * value 为 null 表示清空（new session / 切换到没数据的 session）。
+   */
+  setLatestInputTokens: (sessionId: string, value: number | null) => void;
   updateMessage: (
     sessionId: string,
     messageId: string,
@@ -486,9 +509,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
   idIndexBySession: {},
   loadingHistoryBySession: {},
   loadedHistoryBySession: {},
+  latestInputTokensBySession: {},
 
   setSelectedAgent: (id, type = "agent") =>
     set({ selectedAgentId: id, selectedType: type }),
+
+  setLatestInputTokens: (sessionId, value) =>
+    set((s) => {
+      const next = { ...s.latestInputTokensBySession };
+      if (value == null) {
+        delete next[sessionId];
+      } else {
+        next[sessionId] = value;
+      }
+      return { latestInputTokensBySession: next };
+    }),
 
   setMessages: (sessionId, messages) =>
     set((s) => {
@@ -1488,10 +1523,36 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
       const finalMessages = messages.map((m) => attachAnchors(m));
 
+      // 提取最新一次 LLM 调用的 per-call input_tokens。
+      // 数据源：runs 按 createdAt 倒序，第一个含 assistant messages 的 run 里
+      // 找最后一个 assistant message 的 metrics.input_tokens（per-call）。
+      // 跟 run.metrics.input_tokens（累加）的区别：见
+      // latestInputTokensBySession 字段说明。
+      let latestInputTokens: number | null = null;
+      const sortedRunsDesc = [...runs].sort(
+        (a, b) => toMs(b.created_at) - toMs(a.created_at)
+      );
+      for (const run of sortedRunsDesc) {
+        const ms = run.messages ?? [];
+        for (let i = ms.length - 1; i >= 0; i--) {
+          const m = ms[i];
+          if (
+            m &&
+            (m.role as string) === "assistant" &&
+            m.metrics?.input_tokens != null
+          ) {
+            latestInputTokens = m.metrics.input_tokens;
+            break;
+          }
+        }
+        if (latestInputTokens != null) break;
+      }
+
       // 如果自 fetch 开始后又有更新的 loadHistory 触发，跳过本轮的 setMessages
       // —— 后启动的请求会负责最终的 state 落地。
       if (loadHistoryGeneration.get(sessionId) === myGen) {
         get().setMessages(sessionId, finalMessages);
+        get().setLatestInputTokens(sessionId, latestInputTokens);
       }
     } catch (err) {
       console.error("loadHistory failed", err);
@@ -1573,6 +1634,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
         // 已存在：原地更新
         get().updateAnyMessage(effectiveSessionId, message.id, () => message);
+      },
+      onModelRequestCompleted: (inputTokens: number) => {
+        // AGNO 在每次 LLM 调用完成后发的 per-call token 数。
+        // 进度条直接用"最新一次"的值——它就是"当前 context size"。
+        get().setLatestInputTokens(effectiveSessionId, inputTokens);
       },
       onSubMessageCreated: (parentMessageId: string, sub: ChatMessage) => {
         // 占位实际上由 onMessageUpdate 第一次触发时 append；这里留作 hook 给未来的 UI/逻辑。
@@ -1706,6 +1772,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
         // 顶层或 sub 都用 updateAnyMessage
         get().updateAnyMessage(session, m.id, () => m);
       },
+      onModelRequestCompleted: (inputTokens: number) => {
+        if (sessionId) {
+          get().setLatestInputTokens(sessionId, inputTokens);
+        }
+      },
       onChunk: () => {},
       onRunCompleted: () => {
         useSessionsStore.getState().loadSessions(activeId, true);
@@ -1757,5 +1828,28 @@ export function useSubMessageById(
     const idx = s.idIndexBySession[sessionId];
     if (!idx) return null;
     return idx.get(subMessageId) ?? null;
+  });
+}
+
+/**
+ * 当前 session 最近一次 LLM 调用的 per-call input_tokens。
+ *
+ * 用途：ContextProgressBar 展示"已用 / 上限"的百分比。
+ * 数据来源：
+ *   - streaming 期间：AGNO ModelRequestCompleted 事件的 input_tokens
+ *     （runner 通过 onModelRequestCompleted 回调实时写入）
+ *   - 加载历史时：runs[latest].messages 里最后一个 assistant message 的
+ *     metrics.input_tokens（loadHistory 写入）
+ *
+ * 这才是真正的"当前 context size"——比 message.metrics.input_tokens
+ * （AGNO run 级累加值，会被合并/求和放大 N 倍）准确得多。
+ *
+ * 没拿到（新建 session / 还在 streaming / 第一次 LLM 调用还没回来）→ 返回 null，
+ * 进度条降级为 "— / N" 占位。
+ */
+export function useLatestInputTokens(sessionId: string | null): number | null {
+  return useChatStore((s) => {
+    if (!sessionId) return null;
+    return s.latestInputTokensBySession[sessionId] ?? null;
   });
 }

@@ -89,7 +89,7 @@ export function MessageInput() {
 
   return (
     <div className="border-t border-border bg-background/80 backdrop-blur px-4 py-3">
-      <div className="max-w-3xl mx-auto">
+      <div className="max-w-4xl mx-auto">
         {needUserId && (
           <button
             onClick={() => setShowUserIdSetup(true)}
