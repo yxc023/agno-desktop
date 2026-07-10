@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "lint": "oxlint",
     "typecheck": "tsc -b --noEmit",
+    "test": "bun run scripts/test.ts",
     "tauri": "tauri",
     "dev:desktop": "tauri dev",
     "build:desktop": "tauri build"
