@@ -13,6 +13,14 @@
         { "url": "http://*:*/*?*" },
         { "url": "https://*:*/*?*" }
       ]
+    },
+    {
+      "identifier": "shell:allow-open",
+      "allow": [
+        { "url": "http://*:*" },
+        { "url": "https://*:*" },
+        { "url": "mailto:*" }
+      ]
     }
   ]
 }
