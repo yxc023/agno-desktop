@@ -1,3 +1,4 @@
+import { Fragment, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
@@ -38,15 +39,27 @@ export function Markdown({ children, className, streaming }: Props) {
         rehypePlugins={[rehypeRaw, [rehypeHighlight, { detect: true }]]}
         components={{
           pre({ children }) {
-            // rehype-highlight 已经在 pre 里包裹了 code
-            return <>{children}</>;
+            // rehype-highlight 已经在 pre 里包裹了 code，
+            // 直接把 children 透传给我们的 code 渲染管线，避免多套一层无意义 fragment
+            return <Fragment>{children}</Fragment>;
           },
-          code({ className: cls, children, ...props }) {
-            const isInline = !(props as any).node?.position;
-            const text = String(children ?? "");
+          code({ className: cls, children, node: _node, ...props }) {
+            // 关键修复（修复前是 `String(children)`，会把 rehype-highlight 产生的
+            // `<span>` 元素数组序列化成 "[object Object],[object Object],..."，
+            // 导致代码块里出现一串 "[object Object]" 字样）。
+            //
+            // 检测 block vs inline：用 className 里有没有 `language-*` 区分。
+            //   - 旧 `isInline = !props.node?.position` 永远为 false（两种 code 都
+            //     有 position），结果 inline 也走 CodeBlock 路径——只是因为 inline
+            //     的 children 是 string，`String("code")` 偶然没坏。
+            //   - rehype-highlight + `detect: true` 总会给 fenced block 加上
+            //     `language-xxx` 类（要么显式、要么自动识别），inline 永远没有。
+            //     所以 className 是最可靠的区分依据。
             const langMatch = /language-(\w+)/.exec(cls || "");
             const language = langMatch?.[1];
-            if (isInline || !language) {
+
+            if (!language) {
+              // inline code：直接渲染子节点（highlight.js 不处理 inline）
               return (
                 <code
                   className="px-1.5 py-0.5 rounded bg-muted text-foreground font-mono text-[0.85em]"
@@ -56,7 +69,12 @@ export function Markdown({ children, className, streaming }: Props) {
                 </code>
               );
             }
-            return <CodeBlock language={language} value={text.replace(/\n$/, "")} />;
+
+            // block code：把 children（已经是 hljs token span 树）原样传给 CodeBlock，
+            // 保留高亮。CodeBlock 自己会用 extractText(children) 拿到纯文本做"复制"。
+            return (
+              <CodeBlock language={language}>{children as ReactNode}</CodeBlock>
+            );
           },
           a({ href, children }) {
             return (
