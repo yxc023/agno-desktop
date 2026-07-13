@@ -1,0 +1,49 @@
+# CI: PR / push to main 闸门
+#
+# 跑 typecheck / lint / test / 前端 build，确保进 main 的代码至少能编译。
+# 不构建 Tauri 桌面端（那由 release.yml 在 tag 触发时跑）。
+# Runner 用 ubuntu-latest：便宜、快，前端 CI 足够。
+#
+# 预估耗时：5-8 分钟（含 bun install 缓存）。
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# 取消上一次相同 workflow 的运行，避免 PR push 时排队
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Typecheck / Lint / Test / Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Test
+        run: bun run test
+
+      - name: Frontend build
+        run: bun run build
