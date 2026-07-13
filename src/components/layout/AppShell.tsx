@@ -24,6 +24,7 @@ import { useActiveInstance, useInstancesStore } from "@/stores/instances-store";
 import { Logo, LogoText } from "@/components/common/Logo";
 import { useUIStore } from "@/stores/ui-store";
 import { InstanceFormDialog } from "@/components/instances/InstanceFormDialog";
+import { AppTitleBar } from "@/components/layout/AppTitleBar";
 
 interface NavItem {
   to: string;
@@ -111,12 +112,17 @@ export function AppShell() {
   return (
     <TooltipProvider delayDuration={500}>
       <div className="flex h-screen w-screen overflow-hidden bg-background text-foreground">
+        {/* 自定义 titlebar：见 AppTitleBar.tsx —— 跟 tauri.conf.json 的
+            titleBarStyle=Overlay 配套，React 内容从 (0,0) 开始，
+            这里给 sidebar 和 main 都让出 28pt（h-7）高度。 */}
+        <AppTitleBar />
+
         {/* ============================================================
             左侧主导航（终端美学 + 暖琥珀点缀）
             ============================================================ */}
         <aside
           className={cn(
-            "flex flex-col border-r border-sidebar-border bg-sidebar/80 backdrop-blur-sm transition-[width] duration-200",
+            "flex flex-col border-r border-sidebar-border bg-sidebar/80 backdrop-blur-sm transition-[width] duration-200 pt-7",
             collapsed ? "w-[56px]" : "w-[244px]"
           )}
         >
@@ -190,7 +196,7 @@ export function AppShell() {
         {/* ============================================================
             主区域
             ============================================================ */}
-        <main className="flex flex-1 flex-col overflow-hidden">
+        <main className="flex flex-1 flex-col overflow-hidden pt-7">
           <Outlet />
         </main>
       </div>
