@@ -52,3 +52,8 @@ coverage/
 # Logs from dev runs
 *.log
 .worktrees
+
+# Release artifacts (regenerated per release by `tauri signer sign` + manual JSON build)
+# See README "自动更新" for the full rebuild flow.
+/latest.json
+/latest-*.json
