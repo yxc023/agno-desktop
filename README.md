@@ -249,10 +249,10 @@ agno-desktop/
        prerelease: false
        updaterJsonPreferNsq: false
    ```
-   `tauri-action` 会自动：
-   - 构建 macOS / Windows / Linux 三平台 bundle
-   - 生成 `latest.json`（含 url + 签名）
-   - 上传为 GitHub Release draft
+`tauri-action` 会自动：
+    - 构建 macOS / Windows 平台 bundle
+    - 生成 `latest.json`（含 url + 签名）
+    - 上传为 GitHub Release draft
 
 4. **本地测试 updater**：
    ```bash
@@ -271,7 +271,7 @@ agno-desktop/
 - 命中更新 → 右下角 toast「发现新版本 vX.Y.Z」，提供「立即更新 / 稍后」
 - 点击「立即更新」 → 进度 dialog（百分比 + 已下载字节）
 - 下载完成 + 签名校验通过：
-  - macOS / Linux：自动重启应用并应用新 binary
+  - macOS：自动重启应用并应用新 binary
   - Windows：弹安装器（installMode=passive 静默安装后用户手动重启）
 - 错误（网络 / 签名失败）→ 错误 toast + 「重试」
 
@@ -329,9 +329,9 @@ git push --tags
 | 平台 | Runner | 格式 | 备注 |
 |------|--------|------|------|
 | macOS | `macos-latest` | `*.dmg` | Apple Silicon only（aarch64） |
-| Linux | `ubuntu-22.04` | `*.AppImage` | x86_64 |
 | Windows | `windows-latest` | `*.msi` | x86_64 |
 
+> Linux 暂未打包——先聚焦 macOS / Windows。  
 > **未做** Apple 代码签名 / 公证 — 首次启动需右键 → 打开绕过 Gatekeeper。  
 > **未做** Apple Intel (x86_64) — 仅 Apple Silicon。如果有 Intel Mac 用户反馈，再加。
 
