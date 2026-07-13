@@ -281,6 +281,60 @@ agno-desktop/
 - 移动端（iOS / Android）：走应用商店更新，不使用此 plugin
 - 设置页中「立即检查」按钮在非桌面端自动 disabled + 显示提示
 
+### 发布流程（CI 自动）
+
+仓库配了 GitHub Actions，推 tag 即可自动出全平台产物：
+
+#### 一次性配置
+
+**1. 把密钥塞进 GitHub Secrets**
+
+去 [Settings → Secrets and variables → Actions](https://github.com/yxc023/agno-desktop/settings/secrets/actions)，添加两个 secret：
+
+| Secret 名 | 值 | 怎么拿 |
+|-----------|---|--------|
+| `TAURI_SIGNING_PRIVATE_KEY` | 私钥文件完整内容 | `cat ~/.tauri/keys/agno-desktop.key` |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | 密码 | `cat ~/.tauri/keys/agno-desktop.key.password` |
+
+**2. workflow 文件**（已在仓库里）
+
+- `.github/workflows/ci.yml` — PR / push 闸门（typecheck + lint + test + build）
+- `.github/workflows/release.yml` — tag 触发：3 平台 build + 自动签名 + draft release
+
+#### 每次发版
+
+```bash
+# 1. bump version（三个文件必须保持一致）
+#    package.json
+#    src-tauri/Cargo.toml
+#    src-tauri/tauri.conf.json
+
+# 2. commit + push
+git commit -am "chore: bump version to 0.0.X"
+git push
+
+# 3. 打 tag → 自动触发 workflow
+git tag v0.0.X
+git push --tags
+
+# 4. 等待 15-25 分钟
+#    GitHub → Actions 看进度
+#    完成后会出现 draft release：https://github.com/yxc023/agno-desktop/releases/tag/v0.0.X
+
+# 5. 审核 → 点 "Publish release"
+```
+
+#### 产物矩阵（当前）
+
+| 平台 | Runner | 格式 | 备注 |
+|------|--------|------|------|
+| macOS | `macos-latest` | `*.dmg` | Apple Silicon only（aarch64） |
+| Linux | `ubuntu-22.04` | `*.AppImage` | x86_64 |
+| Windows | `windows-latest` | `*.msi` | x86_64 |
+
+> **未做** Apple 代码签名 / 公证 — 首次启动需右键 → 打开绕过 Gatekeeper。  
+> **未做** Apple Intel (x86_64) — 仅 Apple Silicon。如果有 Intel Mac 用户反馈，再加。
+
 ## 文档
 
 - [设计稿](./docs/design.md) — 整体架构、UI 设计、数据流
