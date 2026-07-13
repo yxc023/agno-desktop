@@ -43,6 +43,8 @@ export interface Settings {
   /** ChatPage 分栏宽度（持久化）——左 sessions 栏、右 InstancesPanel 栏 */
   chatSessionsWidth?: number;
   chatRightWidth?: number;
+  /** 启动时自动检查更新（仅 Tauri desktop 生效；browser / dev 默认 no-op） */
+  autoCheckUpdate: boolean;
 }
 
 const KEY = "agno:settings";
@@ -57,6 +59,7 @@ const defaults: Settings = {
   typewriterEffect: true,
   currentView: "chat",
   sidebarCollapsed: false,
+  autoCheckUpdate: true,
 };
 
 interface SettingsState extends Settings {

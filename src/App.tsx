@@ -8,6 +8,7 @@ import { MemoryPage } from "@/pages/MemoryPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { NotFoundPage } from "@/pages/NotFoundPage";
 import { UserIdSetupDialog } from "@/components/common/UserIdSetupDialog";
+import { UpdateToast } from "@/components/common/UpdateToast";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useEffectiveTheme } from "@/hooks/use-effective-theme";
 
@@ -64,6 +65,7 @@ export default function App() {
         onOpenChange={setShowSetup}
         force={!userIdConfirmed || !userId.trim()}
       />
+      <UpdateToast />
     </BrowserRouter>
   );
 }

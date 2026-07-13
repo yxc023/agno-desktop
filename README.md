@@ -207,6 +207,80 @@ agno-desktop/
 - **Approval 系统**：Run 级别 HITL 完整支持；Approval 端点列表未在 UI 暴露
 - **断线重连**：UI 已记录 `last_event_index`，但 resume 触发逻辑未接
 
+## 自动更新
+
+桌面端集成了 [tauri-plugin-updater](https://v2.tauri.app/plugin/updater/)，开箱即用支持 GitHub Releases 渠道。
+
+**当前默认配置**（`src-tauri/tauri.conf.json`）：
+
+- endpoint: `https://github.com/yxc023/agno-desktop/releases/latest/download/latest.json`
+- pubkey: 空（**必须生成**才可启用，见下文）
+- 启动时自动检查 + 右下角 toast 通知 + 设置页「立即更新」
+
+### 启用流程（自己发布时）
+
+1. **生成签名密钥对**（只需一次）：
+   ```bash
+   cargo install tauri-cli --version "^2.0" --locked
+   tauri signer generate -w ~/.tauri/keys/agno-desktop.key
+   ```
+   输出里以 `Public Key: dW50cnVz...` 开头的长串就是 pubkey。
+
+2. **把 pubkey 填到 `tauri.conf.json`**：
+   ```json
+   "updater": {
+     "active": true,
+     "endpoints": ["https://github.com/<owner>/<repo>/releases/latest/download/latest.json"],
+     "pubkey": "<paste your public key here>",
+     "windows": { "installMode": "passive" }
+   }
+   ```
+
+3. **修改 GitHub Actions 工作流**（`.github/workflows/release.yml`）：
+   ```yaml
+   - uses: tauri-apps/tauri-action@v0
+     env:
+       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+     with:
+       tagName: v__VERSION__
+       releaseName: "Agno Desktop v__VERSION__"
+       releaseBody: "See CHANGELOG.md"
+       releaseDraft: true
+       prerelease: false
+       updaterJsonPreferNsq: false
+   ```
+   `tauri-action` 会自动：
+   - 构建 macOS / Windows / Linux 三平台 bundle
+   - 生成 `latest.json`（含 url + 签名）
+   - 上传为 GitHub Release draft
+
+4. **本地测试 updater**：
+   ```bash
+   # 1) 在 GitHub 上 draft release 跑通前，可先用本地文件协议测试
+   #    但 file:// 在 WebView2/WKWebView 默认禁用，需 https endpoint。
+   # 2) 简易方案：起一个静态 server，把 latest.json + *.dmg/*.msi 放上去，
+   #    把 endpoints 改成 http://localhost:8000/latest.json
+   python3 -m http.server 8000 --directory dist-update
+   # 3) 修改 tauri.conf.json 的 endpoints，bun run build:desktop
+   ```
+
+### 工作原理
+
+- 启动后 5 秒（用户设置 `autoCheckUpdate=false` 时跳过），
+  自动调用 `check()` 拉 `latest.json`，对比 `version` 字段
+- 命中更新 → 右下角 toast「发现新版本 vX.Y.Z」，提供「立即更新 / 稍后」
+- 点击「立即更新」 → 进度 dialog（百分比 + 已下载字节）
+- 下载完成 + 签名校验通过：
+  - macOS / Linux：自动重启应用并应用新 binary
+  - Windows：弹安装器（installMode=passive 静默安装后用户手动重启）
+- 错误（网络 / 签名失败）→ 错误 toast + 「重试」
+
+### 浏览器 / 移动端行为
+
+- 浏览器 dev (`vite dev`)：updater 钩子完全 no-op，不会触发任何 plugin 调用
+- 移动端（iOS / Android）：走应用商店更新，不使用此 plugin
+- 设置页中「立即检查」按钮在非桌面端自动 disabled + 显示提示
+
 ## 文档
 
 - [设计稿](./docs/design.md) — 整体架构、UI 设计、数据流

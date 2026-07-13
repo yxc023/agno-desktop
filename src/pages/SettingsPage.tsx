@@ -20,9 +20,15 @@ import {
   Moon,
   Monitor,
   Palette,
+  Download,
+  RefreshCw,
+  Info,
 } from "lucide-react";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useUpdater } from "@/hooks/use-updater";
+import { getTauriAppVersion } from "@/lib/tauri";
 
 export function SettingsPage() {
   const {
@@ -32,9 +38,17 @@ export function SettingsPage() {
     showToolDetails,
     collapseReasoning,
     typewriterEffect,
+    autoCheckUpdate,
     update,
     reset,
   } = useSettingsStore();
+
+  const updater = useUpdater();
+  const [appVersion, setAppVersion] = useState<string>("…");
+
+  useEffect(() => {
+    getTauriAppVersion().then((v) => setAppVersion(v ?? "dev"));
+  }, []);
 
   const [userIdDraft, setUserIdDraft] = useState(userId);
   const [userIdError, setUserIdError] = useState<string | null>(null);
@@ -229,6 +243,137 @@ export function SettingsPage() {
 
         <Card>
           <CardHeader>
+            <CardTitle className="text-base flex items-center gap-2">
+              <Download className="h-4 w-4 text-accent" />
+              自动更新
+            </CardTitle>
+            <CardDescription>
+              通过官方发布服务器检查并安装新版本。
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {!updater.available && (
+              <div className="flex items-start gap-2 rounded-md border border-info/40 bg-info/[0.04] p-2.5">
+                <Info className="h-3.5 w-3.5 text-info shrink-0 mt-0.5" />
+                <div className="text-[12px] text-muted-foreground leading-relaxed">
+                  当前是浏览器预览模式，自动更新不会运行。
+                  <br />
+                  该功能仅在打包后的桌面客户端（macOS / Windows / Linux）中生效——
+                  运行 <code className="font-mono text-[11px] bg-muted px-1 rounded">bun run build:desktop</code> 构建后即可使用。
+                </div>
+              </div>
+            )}
+
+            <ToggleRow
+              label="启动时自动检查更新"
+              description="应用启动后静默检查，发现新版本时通过右下角通知"
+              checked={autoCheckUpdate}
+              onCheckedChange={(v) => update({ autoCheckUpdate: v })}
+            />
+            <Separator />
+
+            <div className="flex items-center justify-between gap-4">
+              <div className="space-y-0.5 flex-1">
+                <Label className="text-sm font-medium">当前版本</Label>
+                <p className="font-mono text-[11px] text-muted-foreground tabular-nums">
+                  v{appVersion}
+                </p>
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={
+                  updater.status === "checking" ||
+                  updater.status === "downloading"
+                }
+                onClick={() => {
+                  // 浏览器 / 移动端 / dev 模式下给出明确反馈，而不是按钮
+                  // 看起来"灰着没反应"让用户以为是 bug
+                  if (!updater.available) {
+                    toast.info("自动更新仅在桌面客户端中生效", {
+                      description:
+                        "请运行 bun run build:desktop 构建桌面版本，或在已安装的 Agno Desktop 中使用此功能。",
+                      duration: 5000,
+                    });
+                    return;
+                  }
+                  void updater.checkNow();
+                }}
+                className="h-8"
+              >
+                <RefreshCw
+                  className={cn(
+                    "h-3.5 w-3.5 mr-1.5",
+                    updater.status === "checking" && "animate-spin"
+                  )}
+                />
+                {updater.status === "checking" ? "检查中…" : "立即检查"}
+              </Button>
+            </div>
+
+            {updater.status === "available" && updater.info && (
+              <>
+                <Separator />
+                <div className="rounded-md border border-accent/30 bg-accent/[0.05] p-3 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-sm font-medium">
+                      发现新版本 v{updater.info.version}
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 text-xs"
+                        onClick={updater.dismiss}
+                      >
+                        稍后
+                      </Button>
+                      <Button
+                        size="sm"
+                        className="h-7 text-xs"
+                        onClick={() => void updater.install()}
+                      >
+                        <Download className="h-3 w-3 mr-1" />
+                        立即更新
+                      </Button>
+                    </div>
+                  </div>
+                  {updater.info.notes && (
+                    <div className="text-[11.5px] text-muted-foreground max-h-32 overflow-y-auto whitespace-pre-wrap">
+                      {updater.info.notes}
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+
+            {updater.status === "ready" && (
+              <>
+                <Separator />
+                <div className="rounded-md border border-success/30 bg-success/[0.05] p-3 text-sm">
+                  ✓ 更新已下载完成，重启应用后生效
+                </div>
+              </>
+            )}
+
+            {updater.status === "error" && updater.error && (
+              <>
+                <Separator />
+                <div className="rounded-md border border-destructive/30 bg-destructive/[0.05] p-3 space-y-1.5">
+                  <div className="text-sm font-medium text-destructive">
+                    更新失败
+                  </div>
+                  <div className="text-[11.5px] text-muted-foreground font-mono break-all">
+                    {updater.error}
+                  </div>
+                </div>
+              </>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
             <CardTitle className="text-base">重置</CardTitle>
             <CardDescription>
               清除所有偏好设置（包括 user_id）
@@ -244,7 +389,8 @@ export function SettingsPage() {
         </Card>
 
         <div className="text-center text-xs text-muted-foreground pt-4 pb-2">
-          Agno Desktop v0.1 · 对话从 AGNO 服务端拉取，本地仅缓存配置
+          Agno Desktop v{appVersion === "…" ? "0.1" : appVersion} · 对话从 AGNO
+          服务端拉取，本地仅缓存配置
         </div>
       </div>
     </div>
