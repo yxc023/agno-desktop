@@ -1,15 +1,13 @@
 # Release: tag push 触发，跨平台 build + sign + publish
 #
 # 触发方式：git tag v0.0.X && git push --tags
-#   → 自动在 draft release 里产出所有平台的 dmg/msi/AppImage + latest.json
+#   → 自动在 draft release 里产出所有平台的 dmg/msi + latest.json
 #   → 你去 GitHub Release 页面审核 → "Publish release"
 #
-# 矩阵决策（与用户确认）：
-#   - D1: ✅ 配 CI（见 ci.yml）
-#   - D2: macOS 只出 aarch64（Apple Silicon）
-#   - D3: ❌ 不做 Apple code-sign / notarize（首次启动需右键 → 打开）
-#   - D4: Linux 只出 AppImage
-#   - D5: release notes 模板 + GitHub 自动生成 commit log
+# 矩阵：
+#   - macOS aarch64 (Apple Silicon, dmg)
+#   - Windows x86_64 (MSI)
+# Linux 暂不打包（先聚焦 macOS / Windows）
 #
 # Secrets 必须在 Settings → Secrets → Actions 配齐：
 #   - TAURI_SIGNING_PRIVATE_KEY         (cat ~/.tauri/keys/agno-desktop.key 输出)
@@ -54,14 +52,6 @@ jobs:
               target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
               target/aarch64-apple-darwin/release/bundle/dmg/*.dmg.sig
               target/aarch64-apple-darwin/release/bundle/macos/*.app
-          - platform: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
-            label: Linux (AppImage)
-            args: ""
-            artifact_glob: |
-              target/release/bundle/appimage/*.AppImage
-              target/release/bundle/appimage/*.AppImage.sig
-              target/release/bundle/deb/*.deb
           - platform: windows-latest
             target: x86_64-pc-windows-msvc
             label: Windows (MSI)
@@ -85,27 +75,11 @@ jobs:
       - name: Setup Rust (stable)
         uses: dtolnay/rust-toolchain@stable
 
-      # 给 Tauri Action 提供：rustup target add（如需）、Linux 系统依赖（webkit2gtk 等）
+      # 给 Tauri Action 提供：rustup target add（如需）
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: ${{ matrix.target }}
-
-      - name: Linux system dependencies
-        if: matrix.platform == 'ubuntu-22.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            patchelf \
-            build-essential \
-            curl \
-            wget \
-            file \
-            libxdo-dev \
-            libssl-dev
 
       - name: Install JS dependencies
         run: bun install --frozen-lockfile
@@ -142,7 +116,6 @@ jobs:
             | File | OS |
             |------|-----|
             | `*.dmg` | macOS Apple Silicon (M1/M2/M3/M4) |
-            | `*.AppImage` | Linux x86_64 |
             | `*.msi` | Windows x86_64 |
 
             > macOS dmg is **not** Apple code-signed / notarized.
