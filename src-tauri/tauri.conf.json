@@ -44,7 +44,12 @@
     "category": "DeveloperTool",
     "shortDescription": "Local desktop client for AGNO AgentOS",
     "longDescription": "Connect to one or more AGNO AgentOS instances and chat with streaming tool calls, reasoning blocks, and rich Markdown rendering.",
-    "publisher": "Agno Desktop Project"
+    "publisher": "Agno Desktop Project",
+    "macOS": {
+      "signingIdentity": null,
+      "providerShortName": null,
+      "entitlements": null
+    }
   },
   "plugins": {
     "updater": {
