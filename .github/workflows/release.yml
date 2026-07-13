@@ -150,7 +150,7 @@ jobs:
           releaseDraft: true
           prerelease: false
           includeUpdaterJson: true     # ← 关键：自动生成 latest.json
-          updaterJsonPreferNsq: false  # 用 RSA signature，不用 nsq
+          updaterJsonPreferNsis: false  # 用 RSA signature，不用 nsis
           args: ${{ matrix.args }}
 
       # tauri-action 已经把 artifacts 上传到 release 了；下面这步只保留 draft + 一份 cache 给后续 verify
