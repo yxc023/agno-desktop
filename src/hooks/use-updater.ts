@@ -24,8 +24,6 @@ import {
   checkForUpdate,
   downloadAndInstall,
   isUpdaterAvailable,
-  isWindowsDesktop,
-  relaunchApp,
   type InstallResult,
   type ProgressCallback,
   type UpdateInfo,
@@ -177,18 +175,9 @@ export function useUpdater(): UpdaterState & UpdaterActions {
     const result: InstallResult = await downloadAndInstall(onProgress);
     if (result.ok) {
       setStateSafe({ status: "ready" });
-      // Windows 走安装器，需要手动重启；macOS / Linux 在
-      // downloadAndInstall 内部已经替换 binary 并退出进程。
-      if (isWindowsDesktop()) {
-        toast.success(
-          "更新已下载完成，请重启应用完成安装",
-          { duration: 6000, action: { label: "立即重启", onClick: () => relaunchApp() } }
-        );
-      } else {
-        toast.success("更新已下载，应用即将重启", { duration: 4000 });
-        // 给 toast 一点展示时间再重启
-        setTimeout(() => relaunchApp(), 1500);
-      }
+      // 不自动重启——交给 UpdateToast 的 ready dialog 让用户确认。
+      // 之前的 setTimeout(relaunchApp, 1500) 太隐形，用户经常错过；
+      // 现在用显式 dialog + [立即重启]/[稍后] 按钮。
     } else {
       // 用户取消 (no-update) 不算错；其它都展示 error
       if (result.reason !== "no-update") {

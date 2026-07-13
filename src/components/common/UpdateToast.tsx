@@ -13,9 +13,10 @@
  *   关闭时直接删掉这一行即可。
  *
  * 状态 → UI 映射：
- *   idle / checking / up-to-date / ready  → 静默（ready 由 hook 内部 toast）
+ *   idle / checking / up-to-date            → 静默
  *   available                              → 持续 toast（"立即更新 / 稍后"）
  *   downloading                            → 对话框（带进度条 + 百分比）
+ *   ready                                  → 确认 dialog（"立即重启 / 稍后"）
  *   error                                  → toast（错误信息 + "重试"按钮）
  *
  * dev / 浏览器环境：useUpdater 返回 available=false，
@@ -33,8 +34,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Download, RefreshCw, X } from "lucide-react";
+import { CheckCircle2, Download, RefreshCw, X } from "lucide-react";
 import { useUpdater } from "@/hooks/use-updater";
+import { relaunchApp } from "@/lib/updater";
 import { cn } from "@/lib/utils";
 
 export function UpdateToast() {
@@ -137,8 +139,16 @@ export function UpdateToast() {
   const percent =
     total && total > 0 ? Math.min(100, Math.round((downloaded / total) * 100)) : null;
 
+  /* ---------------- ready: 确认重启 dialog ---------------- */
+  // 重要：这里需要 ref 而不是直接用 updater.dismiss，因为 onClick 在 dialog 渲染时
+  // capture，updater.dismiss 引用变化不会重新绑定。
+  const dismissRef = useRef(updater.dismiss);
+  dismissRef.current = updater.dismiss;
+
   return (
-    <Dialog open={showDownloadDialog} onOpenChange={() => { /* 不可关闭 */ }}>
+    <>
+      {/* downloading dialog（进度）*/}
+      <Dialog open={showDownloadDialog} onOpenChange={() => { /* 不可关闭 */ }}>
       <DialogContent
         className="max-w-sm"
         showClose={false}
@@ -198,6 +208,52 @@ export function UpdateToast() {
         </DialogFooter>
       </DialogContent>
     </Dialog>
+
+      {/* ready dialog（确认重启）—— 用户必须主动点"立即重启"才会重启 */}
+      <Dialog
+        open={status === "ready"}
+        onOpenChange={(open) => {
+          // 点关闭 / Esc / 点击遮罩 = dismiss（用户选"稍后"）
+          if (!open) dismissRef.current();
+        }}
+      >
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base">
+              <CheckCircle2 className="h-4 w-4 text-success" />
+              更新已下载完成
+              {info?.version && (
+                <span className="text-muted-foreground font-normal">
+                  v{info.version}
+                </span>
+              )}
+            </DialogTitle>
+            <DialogDescription>
+              是否立即重启应用以完成更新？选择「稍后」会在你下次主动重启时生效。
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button
+              variant="ghost"
+              onClick={dismissRef.current}
+            >
+              稍后
+            </Button>
+            <Button
+              onClick={() => {
+                // 先 dismiss dialog（关掉弹窗，避免 race）
+                dismissRef.current();
+                // 然后触发 relaunch
+                void relaunchApp();
+              }}
+            >
+              <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+              立即重启
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 

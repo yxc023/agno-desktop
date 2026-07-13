@@ -23,6 +23,7 @@ import {
   Download,
   RefreshCw,
   Info,
+  Loader2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -45,6 +46,10 @@ export function SettingsPage() {
 
   const updater = useUpdater();
   const [appVersion, setAppVersion] = useState<string>("…");
+  // 「立即更新」按钮本地 pending 状态：点击瞬间立刻变 loading，
+  // 不依赖 updater.status（后者要等 Rust 端返回才有，下载太快时
+  // 用户根本看不到反馈）。
+  const [installPending, setInstallPending] = useState(false);
 
   useEffect(() => {
     getTauriAppVersion().then((v) => setAppVersion(v ?? "dev"));
@@ -325,16 +330,35 @@ export function SettingsPage() {
                         variant="ghost"
                         className="h-7 text-xs"
                         onClick={updater.dismiss}
+                        disabled={installPending}
                       >
                         稍后
                       </Button>
                       <Button
                         size="sm"
                         className="h-7 text-xs"
-                        onClick={() => void updater.install()}
+                        disabled={installPending}
+                        onClick={() => {
+                          // 点击瞬间 setState(true)，React 立刻进入 loading 渲染；
+                          // 不依赖 updater.install 内部 setStateSafe("downloading")（那要
+                          // 等 Rust 端返回，对几秒就完成的下载来说会闪一下）。
+                          setInstallPending(true);
+                          updater.install().finally(() => {
+                            setInstallPending(false);
+                          });
+                        }}
                       >
-                        <Download className="h-3 w-3 mr-1" />
-                        立即更新
+                        {installPending ? (
+                          <>
+                            <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                            下载中…
+                          </>
+                        ) : (
+                          <>
+                            <Download className="h-3 w-3 mr-1" />
+                            立即更新
+                          </>
+                        )}
                       </Button>
                     </div>
                   </div>
@@ -347,14 +371,7 @@ export function SettingsPage() {
               </>
             )}
 
-            {updater.status === "ready" && (
-              <>
-                <Separator />
-                <div className="rounded-md border border-success/30 bg-success/[0.05] p-3 text-sm">
-                  ✓ 更新已下载完成，重启应用后生效
-                </div>
-              </>
-            )}
+            {/* ready 状态由 UpdateToast 的 confirm dialog 处理，避免重复 UI */}
 
             {updater.status === "error" && updater.error && (
               <>
