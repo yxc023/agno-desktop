@@ -45,5 +45,18 @@
     "shortDescription": "Local desktop client for AGNO AgentOS",
     "longDescription": "Connect to one or more AGNO AgentOS instances and chat with streaming tool calls, reasoning blocks, and rich Markdown rendering.",
     "publisher": "Agno Desktop Project"
+  },
+  "plugins": {
+    "updater": {
+      "active": true,
+      "dialog": false,
+      "endpoints": [
+        "https://github.com/yxc023/agno-desktop/releases/latest/download/latest.json"
+      ],
+      "pubkey": "",
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }
