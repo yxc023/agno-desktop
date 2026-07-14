@@ -17,9 +17,27 @@
  * data-tauri-drag-region 让整个 bar 可拖动窗口，但 inner 控件（按钮/进度区）
  * 必须显式设置 data-tauri-drag-region={false}，否则 Tauri 会把 click 当作
  * drag-start，按钮完全点不动——这是 v2 的一个易踩坑点。
+ *
+ * ── 拖动修复（2026-07）─────────────────────────────────────────────
+ * 之前纯靠 CSS `-webkit-app-region: drag`，在 macOS WKWebView 上有一个
+ * 已知焦点竞态：mousedown 既要 drag 又要把 window 推成 key window 时，
+ * macOS 把这次 click 截走给 focus 转移用，WKWebView 收不到完整 drag
+ * gesture，drag 就不启动。要第二次 click（window 已经 key）才能拖。
+ *
+ * 参考：
+ *   https://github.com/tauri-apps/tauri/issues/11605
+ *   https://github.com/tauri-apps/tauri/issues/4316
+ *
+ * 修法：在 onMouseDown 里显式调 `getCurrentWindow().startDragging()`，
+ * 通过 IPC 直接告诉 native window 开始 drag，绕过 webview 那层。
+ * 子元素（按钮/进度区）有 data-tauri-drag-region="false"，closest()
+ * 命中就 return，让 click 正常走——不会误触发 drag。
+ * ────────────────────────────────────────────────────────────────────
  */
 
+import * as React from "react";
 import { AlertTriangle, Loader2, RefreshCw, RotateCcw } from "lucide-react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useUpdater } from "@/hooks/use-updater";
 import { relaunchApp } from "@/lib/updater";
 import { Button } from "@/components/ui/button";
@@ -30,14 +48,38 @@ export function AppTitleBar() {
   const updater = useUpdater();
   const { status, info, downloaded, total, error } = updater;
 
+  // 见组件顶部注释：macOS WKWebView 的 -webkit-app-region: drag 在首次
+  // mousedown 让 window 获焦的那次 click 上不工作。显式调 startDragging()
+  // 走 IPC 触发 native drag，绕开竞态。
+  //
+  // 子元素（按钮/进度区/错误 chip）都显式设了 data-tauri-drag-region="false"，
+  // 用 closest() 查祖先：命中说明点在控件上，让 click 正常走（return）。
+  const handleDragRegionMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLElement | null;
+    if (target?.closest('[data-tauri-drag-region="false"]')) {
+      return;
+    }
+    // 点的是 drag region 的空白（左侧让出 traffic light 的区域 /
+    // "Agno Desktop" 文字 / 右侧按钮之间的空隙）。
+    e.preventDefault();
+    void getCurrentWindow().startDragging();
+  };
+
   return (
     <div
       data-tauri-drag-region
+      onMouseDown={handleDragRegionMouseDown}
       className={cn(
         "fixed top-0 left-0 right-0 h-7 z-50",
         "flex items-center justify-between",
         // 微微磨砂的底色，跟 macOS titlebar 视觉一致
-        "bg-background/70 backdrop-blur-md border-b border-border/50"
+        "bg-background/70 backdrop-blur-md border-b border-border/50",
+        // 标题栏整条不可选中文本。select-none 已经包含
+        // `-webkit-user-select: none`，对 WKWebView 是关键。
+        // 整条 bar 上的内容只有 "Agno Desktop" 文字 + 更新指示器/按钮，
+        // 都不需要被选，加这条防止某种边界 case 下 WKWebView 启动文本
+        // 选区后让 mousedown 落进 selection handler 而不是 drag。
+        "select-none"
       )}
     >
       {/* 左侧：让出 traffic light (~80pt) + app 标题占位 */}
