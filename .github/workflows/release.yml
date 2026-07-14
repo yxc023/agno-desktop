@@ -135,7 +135,7 @@ jobs:
           echo "Draft release: https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}"
 
   verify:
-    name: Verify latest.json is reachable
+    name: Verify latest.json matches this release
     needs: build
     runs-on: ubuntu-latest
     if: success()
@@ -143,32 +143,132 @@ jobs:
       - name: Wait for GitHub release assets to settle
         run: sleep 30
 
-      - name: Fetch latest.json
-        id: latest
+      # 用 GitHub API + gh CLI 抓本 release 的 latest.json asset。
+      # 不能用 `releases/latest/download/latest.json` ——draft 状态下它会
+      # 重定向到上一个 published release（v0.0.4），那个 stale 的 latest.json
+      # 也恰好写着 "version": "0.0.5"，但 URL 全指向 v0.0.4 artifacts，
+      # 是个 false-positive 陷阱。改用 API 直接按 tag 查这个 release 自己的
+      # asset，draft/published 都能拿。
+      - name: Fetch latest.json via API (tag-scoped, draft-safe)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          URL="https://github.com/${{ github.repository }}/releases/latest/download/latest.json"
-          echo "url=$URL"
-          curl -sLf "$URL" -o latest.json || {
-            echo "::error::latest.json not reachable yet — release may not have been finalized"
+          set -euo pipefail
+          TAG="${{ github.ref_name }}"
+          REPO="${{ github.repository }}"
+
+          ASSET_ID=$(gh api "repos/${REPO}/releases/tags/${TAG}" \
+            --jq '.assets[] | select(.name == "latest.json") | .id')
+
+          if [ -z "${ASSET_ID}" ]; then
+            echo "::error::latest.json not found in release ${TAG}"
+            echo "::error::tauri-action 应该会上传 latest.json 作为 asset，"
+            echo "::error::如果缺了说明 build job 没跑通或 tauri.conf.json 没配 pubkey。"
             exit 1
-          }
+          fi
+          echo "latest.json asset_id=${ASSET_ID} on ${TAG}"
+
+          # API download：Accept header 让 GitHub 返回 raw bytes 而不是 JSON 包装
+          gh api "repos/${REPO}/releases/assets/${ASSET_ID}" \
+            -H "Accept: application/octet-stream" \
+            --output latest.json
+
+          echo "--- latest.json ---"
           cat latest.json
-          python3 -c "
+          echo
+          echo "---"
+
+      - name: Validate latest.json shape + URLs point to THIS tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          python3 << 'PYEOF'
           import json
-          d = json.load(open('latest.json'))
-          assert 'version' in d, 'missing version'
-          assert 'platforms' in d and d['platforms'], 'no platforms'
-          print('OK, version:', d['version'])
-          print('platforms:', list(d['platforms'].keys()))
+          import os
+          import sys
+
+          with open('latest.json') as f:
+              d = json.load(f)
+
+          tag = os.environ['TAG']                       # e.g. "v0.0.5"
+          expected_version = tag.lstrip('v')            # e.g. "0.0.5"
+
+          # 1. Top-level shape
+          if 'version' not in d:
+              sys.exit('missing version field')
+          if 'platforms' not in d or not d['platforms']:
+              sys.exit('no platforms')
+
+          # 2. version 必须等于 tag（剥掉 v 前缀）
+          #    之前 v0.0.4 release 上的 stale latest.json 写着 "version": "0.0.5"
+          #    但 URL 指向 v0.0.4 —— 这个断言就是为了在 build 阶段就拦下来。
+          if d['version'] != expected_version:
+              sys.exit(
+                  f'version mismatch: latest.json says {d["version"]!r}, '
+                  f'expected {expected_version!r} (derived from tag {tag!r})'
+              )
+
+          # 3. 每个 platform 必须有 url + signature，且 url 必须指向本 release
+          #    （这是这次 verify job 升级的核心——之前只看 "url 不为空"）
+          bad_urls = []
           for plat, info in d['platforms'].items():
-            assert info.get('signature'), f'{plat} missing signature'
-            assert info.get('url'), f'{plat} missing url'
-          print('all platforms have url + signature ✓')
-          "
+              if not info.get('signature'):
+                  sys.exit(f'{plat} missing signature')
+              if not info.get('url'):
+                  sys.exit(f'{plat} missing url')
+              url = info['url']
+              expected_substr = f'/releases/download/{tag}/'
+              if expected_substr not in url:
+                  bad_urls.append((plat, url))
+
+          if bad_urls:
+              print('::error::URLs point to wrong release (stale latest.json):')
+              for plat, url in bad_urls:
+                  print(f'::error::  {plat}: {url}')
+              sys.exit(
+                  f'{len(bad_urls)} platform(s) have URLs pointing to a different '
+                  f'release than {tag}. latest.json 上传错了或者 build 阶段没拿到 '
+                  f'正确的 artifacts。'
+              )
+
+          # 4. 必须包含所有 built 平台（matrix include 里列的那些）
+          expected_platforms = {
+              'darwin-aarch64',
+              'darwin-aarch64-app',
+              'windows-x86_64',
+              'windows-x86_64-msi',
+              'windows-x86_64-nsis',
+          }
+          actual = set(d['platforms'].keys())
+          missing = expected_platforms - actual
+          extra = actual - expected_platforms
+          if missing:
+              print(f'::warning::missing expected platforms: {sorted(missing)}')
+              # 不 fail：tauri-action 的 platform key 可能因版本变化
+              if len(missing) > 2:
+                  sys.exit(f'too many missing platforms ({len(missing)})')
+
+          print(f'✓ version matches tag ({d["version"]})')
+          print(f'✓ platforms present: {sorted(actual)}')
+          if extra:
+              print(f'  (extra platforms not in matrix: {sorted(extra)} — OK)')
+          print(f'✓ all {len(actual)} URLs point to {tag}')
+          print(f'✓ all {len(actual)} platforms have signature')
+          PYEOF
 
       - name: Summary
         if: success()
         run: |
-          echo "✅ latest.json is published and valid"
+          echo "✅ latest.json for ${{ github.ref_name }} is valid and points to THIS release"
           echo "Reviewer: visit https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}"
           echo "Then click 'Publish release' to make it visible to updaters."
+
+      - name: Failure summary
+        if: failure()
+        run: |
+          echo "❌ latest.json validation failed"
+          echo "Things to check:"
+          echo "  1. tauri.conf.json plugins.updater.pubkey 配对 CI 的 TAURI_SIGNING_PRIVATE_KEY"
+          echo "  2. build job 跑成功了（artifact_glob 匹配到了 dmg/msi/tar.gz）"
+          echo "  3. tauri-action includeUpdaterJson: true（应该默认就会生成 latest.json asset）"
+          echo "  4. 上面的 stderr 输出，看看是 version 不匹配还是 URL 指向错 release"
