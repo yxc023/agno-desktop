@@ -189,9 +189,11 @@ jobs:
           echo "latest.json asset_id=${ASSET_ID} on ${TAG}"
 
           # API download：Accept header 让 GitHub 返回 raw bytes 而不是 JSON 包装
+          # 注意：CI runner 上的 gh 版本可能较老，不支持 --output 标志，用 shell
+          # redirect > latest.json 替代。
           gh api "repos/${REPO}/releases/assets/${ASSET_ID}" \
             -H "Accept: application/octet-stream" \
-            --output latest.json
+            > latest.json
 
           echo "--- latest.json ---"
           cat latest.json
