@@ -1,7 +1,7 @@
 {
   "name": "agno-desktop",
   "private": true,
-  "version": "0.0.4",
+  "version": "0.0.5",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -12,7 +12,7 @@
     "test": "bun run scripts/test.ts",
     "tauri": "tauri",
     "dev:desktop": "tauri dev",
-    "build:desktop": "tauri build"
+    "build:desktop": "bun run scripts/build-desktop.ts"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.16",

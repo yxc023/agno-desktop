@@ -371,7 +371,16 @@ export function SettingsPage() {
               </>
             )}
 
-            {/* ready 状态由 UpdateToast 的 confirm dialog 处理，避免重复 UI */}
+            {/* ready 状态由 AppTitleBar 的「重启」按钮处理（标题栏右侧常驻），
+                避免在 settings 页面重复一遍触发路径 */}
+            {updater.status === "ready" && updater.info && (
+              <div className="flex items-center gap-2 rounded-md border border-success/30 bg-success/[0.05] p-2.5 text-[12px] text-muted-foreground">
+                <span className="font-mono text-success">●</span>
+                <span>
+                  v{updater.info.version} 已下载完成 — 点击标题栏右上角「重启」按钮应用更新
+                </span>
+              </div>
+            )}
 
             {updater.status === "error" && updater.error && (
               <>

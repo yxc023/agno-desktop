@@ -59,6 +59,7 @@ export type InstallFailureReason =
   | "network" // 网络错误
   | "signature" // 签名校验失败
   | "permission" // capability 没放行
+  | "cross-device" // 临时目录与安装目录跨设备（macOS AppImage-like 限制）
   | "unknown";
 
 /**
@@ -122,14 +123,26 @@ export async function checkForUpdate(): Promise<UpdateInfo | null> {
 /**
  * 下载并安装更新。
  *
+ * 走的是我们自己实现的 `install_update` Rust 命令（src-tauri/src/updater_install.rs），
+ * 而不是 plugin-updater 的 downloadAndInstall。
+ *
+ * 为什么不用 plugin 默认实现：
+ * - tauri-plugin-updater@2.10.1 的 macOS `install_inner` 把临时目录放在默认
+ *   TMPDIR（/var/folders/.../T/），跟 /Applications 不在同一个 APFS volume 时
+ *   rename() 会 EXDEV (os error 18)，并且 plugin **不会 fallback**（只在
+ *   PermissionDenied 时才升级到 AppleScript）。
+ * - 我们的 Rust 命令把临时目录强制 tempdir_in(install_parent)，再走
+ *   `mv -f` via AppleScript（cross-device safe via copy+delete），
+ *   解决 EXDEV 的同时也对 /Applications 这种 root-owned 路径生效。
+ *
  * 行为：
  * - 后台下载（带进度回调）
- * - 下载完成 + 校验通过后：macOS / Linux 自动重启并应用；Windows 弹出
- *   安装器对话框（受 bundle.updater.windows.installMode 控制）
- * - 成功后用户应被引导调用 relaunch() 或重启应用
+ * - 下载 + 解压 + 替换都在 Rust 侧，跨设备 + root-owned 路径都能过
+ * - Windows / Linux：当前实现只走 macOS 路径；其它平台 fall back 到 plugin
+ *   默认 downloadAndInstall（行为与原版一致）
  *
  * 不抛异常，统一返回 InstallResult：
- * - ok=true：下载完成 + 即将安装（platform-specific 行为）
+ * - ok=true：替换完成，用户下次启动就是新版本
  * - ok=false：失败原因 + 用户可读消息
  */
 export async function downloadAndInstall(
@@ -142,6 +155,38 @@ export async function downloadAndInstall(
       message: "当前不是 Tauri 桌面环境，无法更新",
     };
   }
+
+  // macOS 走我们自己的 install_update（带 EXDEV fix）
+  if (isMacOSDesktop()) {
+    try {
+      const { invoke, Channel } = await import("@tauri-apps/api/core");
+      const onProgressEvent = new Channel<{
+        kind: "started" | "progress" | "finished";
+        content_length?: number;
+        chunk_length?: number;
+      }>();
+      onProgressEvent.onmessage = (msg) => {
+        if (!onProgress) return;
+        if (msg.kind === "started") {
+          onProgress({ kind: "started", contentLength: msg.content_length });
+        } else if (msg.kind === "progress") {
+          onProgress({ kind: "progress", chunkLength: msg.chunk_length ?? 0 });
+        } else if (msg.kind === "finished") {
+          onProgress({ kind: "finished" });
+        }
+      };
+      await invoke("install_update", { onProgress: onProgressEvent });
+      return { ok: true };
+    } catch (err) {
+      return {
+        ok: false,
+        reason: classifyError(err),
+        message: formatError(err, "下载/安装更新失败"),
+      };
+    }
+  }
+
+  // 非 macOS（Windows / Linux）：fall back 到 plugin 默认实现
   let update: unknown;
   try {
     const mod = await import("@tauri-apps/plugin-updater");
@@ -162,8 +207,6 @@ export async function downloadAndInstall(
   }
 
   try {
-    // plugin-updater v2 的 downloadAndInstall 支持 progress callback
-    // shape: { event: 'Started'|'Progress'|'Finished', data: {...} }
     const u = update as {
       downloadAndInstall: (cb?: (p: unknown) => void) => Promise<void>;
     };
@@ -192,21 +235,33 @@ export async function downloadAndInstall(
   }
 }
 
+/** macOS 判定 —— install_update 只对 macOS 路径做了 EXDEV 修复 */
+function isMacOSDesktop(): boolean {
+  if (typeof navigator === "undefined") return false;
+  // Tauri webview UA 在 macOS 上带 "Mac OS X" 或 "Macintosh"
+  return /Mac OS X|Macintosh/i.test(navigator.userAgent || "");
+}
+
 /**
  * 重启应用以应用已下载的更新。
  *
- * 注意：仅 Windows 安装器模式（installMode=passive）需要在更新下载完成后
- * 手动重启；其它平台 downloadAndInstall() 内部已经处理重启。
- * 调用方应根据平台决定是否调用此函数。
+ * 在 macOS / Linux 上：plugin-updater 的 downloadAndInstall 已经把新版本
+ * 替换到位、新的二进制已经在磁盘上；调用此函数 spawn 新进程 + exit(0)，
+ * 操作系统（macOS .app / Linux AppImage）会把启动交给新二进制。
+ *
+ * 在 Windows 安装器模式（installMode=passive）下：msi 安装器跑完后用户
+ * 系统会弹"安装完成"对话框，需要手动点"完成"按钮触发重启——这种情况我们
+ * 把错误抛回给调用方，让 UI 提示用户。
+ *
+ * 错误处理：不静默吞。如果 plugin-process 没注册或 capability 没开，
+ * 把错误往上抛，让 UI 层给用户反馈（不然点了"重启"按钮没反应）。
  */
 export async function relaunchApp(): Promise<void> {
-  if (!isTauri()) return;
-  try {
-    const { relaunch } = await import("@tauri-apps/plugin-process");
-    await relaunch();
-  } catch {
-    // 静默：relaunch 失败通常意味着不支持或权限不足，由用户手动重启
+  if (!isTauri()) {
+    throw new Error("当前不是 Tauri 桌面环境，无法重启");
   }
+  const { relaunch } = await import("@tauri-apps/plugin-process");
+  await relaunch();
 }
 
 /** 当前是否 Windows（用于决定是否需要 manual relaunch） */
@@ -226,6 +281,7 @@ function classifyError(err: unknown): InstallFailureReason {
   if (/network|fetch|timeout|econn|enotfound/i.test(msg)) return "network";
   if (/sign|verif|pubkey|signature/i.test(msg)) return "signature";
   if (/permission|capability|denied|forbidden/i.test(msg)) return "permission";
+  if (/cross.?device|exdev|os error 18/i.test(msg)) return "cross-device";
   if (/platform|unsupported/i.test(msg)) return "unsupported-platform";
   return "unknown";
 }
