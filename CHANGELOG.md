@@ -2,6 +2,15 @@
 
 All notable changes to Agno Desktop are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.0.6] - 2026-07-14
+
+### Fixed
+- **Custom titlebar couldn't drag the window on the first click after a focus change.** macOS WKWebView has a known focus race: when a mousedown on a `data-tauri-drag-region` element would also need to make the window the key window, macOS captures the click for the focus transition and the WKWebView never sees the full drag gesture, so the drag doesn't start. Workaround: `AppTitleBar`'s `onMouseDown` now explicitly calls `getCurrentWindow().startDragging()` via IPC, which sends the drag-start command straight to the native window and bypasses the webview's focus race. Sub-elements (restart button / download progress / error chip) use `closest('[data-tauri-drag-region="false"]')` to opt out so button clicks still work. Requires the new `core:window:allow-start-dragging` capability.
+  - Reference: https://github.com/tauri-apps/tauri/issues/11605, https://github.com/tauri-apps/tauri/issues/4316
+
+### Notes
+- No user-facing behavior change for any other part of the app; this is a one-bug patch release.
+
 ## [0.0.5] - 2026-07-14
 
 ### Fixed
