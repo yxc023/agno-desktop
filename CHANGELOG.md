@@ -2,6 +2,35 @@
 
 All notable changes to Agno Desktop are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.0.7] - 2026-07-16
+
+### Added
+- **Model context windows now load from a JSON config file** at `public/config/model-context-windows.json`. The lookup in `src/lib/model-context-windows.ts:174` now consults three sources in order: remote JSON overlay → built-in map → `DEFAULT_CONTEXT_WINDOW`. The remote file is fetched on app boot via `loadRemoteContextWindows()` in `src/App.tsx:42`, with results cached in `localStorage` under `agno:model-context-windows` for 24h. On fetch failure with a stale cache present, the stale cache is used as a lifeline; on failure with no cache, the lookup silently falls back to the built-in map. To add or correct a model's context window, edit the JSON file in `public/config/` and open a PR — no client release needed.
+- `tests/model-context-windows.test.ts` covering exact / longest-prefix lookup, case-insensitivity, remote-overlay precedence over the built-in map, cache TTL behavior, fetch-failure fallback paths, payload validation, concurrent-load de-duplication, and `formatTokenCount`.
+
+### Fixed
+- **Context progress bar was always showing the 128k default** for AGNO instances where the agent endpoint returns a wrapper name (e.g. `OpenAiChat`) instead of the real LLM model id. The real model id only appears in the `ModelRequestCompleted` SSE event (same event that already carries `input_tokens`). The runner callback `onModelRequestCompleted` at `src/lib/chat-runner.ts:43` now also forwards `data.model`; `chat-store.ts` stores it in a new `latestModelIdBySession` map and exposes `useLatestModelId(sessionId)`; `ContextProgressBar` at `src/components/chat/ContextProgressBar.tsx:159` prefers the per-session id over `agent.model.name` and only falls back to the agent-endpoint name when the SSE id is not yet available (new session before the first LLM response). After the first exchange the ring snaps to the correct window from the JSON config.
+- **History-only sessions now also show the correct model window** (not just the first new exchange after my fix above). `loadHistory` at `src/stores/chat-store.ts:1581` now scans `runs[].events[]` for the most recent `ModelRequestCompleted` event and reads its `model` field, writing it to `latestModelIdBySession` next to `latestInputTokensBySession`. Visiting an old session immediately shows the correct window, no new LLM call required. If the AGNO version doesn't persist `events[]` or omits the `model` field, `latestModelId` stays null and ContextProgressBar falls back to `agent.model.name` as before.
+- **Mixed-case map keys (e.g. `MiniMax-M2.7`) now match correctly**. Previously the lookup lowercased only the input side, leaving `MODEL_CONTEXT_WINDOWS` and remote-JSON keys in their original mixed case — so AGNO returning `MiniMax-M2.7` would lowercase to `MiniMax-m2.7` and miss the stored `MiniMax-M2.7` entry, falling back to the 128k default. `LOOKUP_BUILTIN` is now built once at module init with all keys lowercased (`src/lib/model-context-windows.ts:179`), and `validateConfig` lowercases incoming JSON keys at the same time. Regression tests in `tests/model-context-windows.test.ts:159` cover `MiniMax-M2.7`, `MINIMAX-M2.7`, snapshot-prefix variants, and remote-JSON mixed-case keys.
+
+### Added
+- **2026 model lineup** synced into both `public/config/model-context-windows.json` (remote source of truth) and `src/lib/model-context-windows.ts` (built-in fallback):
+  - **Qwen 3.6** (2026-03): `qwen3.6-plus`, `qwen3.6-plus-preview`, `qwen3.6-max` — all **1M tokens** (per official "100 万上下文" announcement).
+  - **Doubao** (ByteDance): `doubao-1.5-pro` / `-256k` (256k), `-32k` (32k), `doubao-1.5-lite` (256k), `doubao-1.5-vision-pro` (128k), `doubao-1.8` (256k), `doubao-2.1` / `-pro` (256k), `doubao-seed-code` (128k), `doubao-seed-2.0-lite` (128k). Doubao entries marked `TODO: 确认精确值` should be cross-checked against `https://www.volcengine.com/docs/82379` before relying on them.
+  - **MiniMax M3** (2026-06): `MiniMax-M3`, `MiniMax-M3-preview` — **1M tokens** via MiniMax's sparse attention (MSA) architecture; confirmed by official release notes and the third-party `cc-haha` commit "set MiniMax-M3 default context to 1m".
+
+  JSON total: 102 → 117 entries. The two files must stay in lockstep — see `tests/model-context-windows.test.ts:186` for spot checks of each new model.
+
+### Changed
+- **Replaced hand-rolled `public/config/model-context-windows.json` with [models.dev](https://models.dev)** as the canonical remote data source. The app now fetches `https://models.dev/api.json` on boot (24h localStorage cache under `agno:models-dev-catalog`, schema = SST-managed). New models and updated context windows propagate automatically without a client release.
+  - **CORS is wide open** (`Access-Control-Allow-Origin: *`), so the SPA fetches it directly — no Vite proxy needed. Cloudflare CDN with `must-revalidate`.
+  - **Adapter** (`src/lib/model-context-windows.ts:303`): flattens the nested `{providerId: {models: {[id]: {limit: {context}}}}}` into a flat `{[bareModelId]: ModelContextEntry}`. Filter-out: `*-token-plan` / `*-coding-plan` / `*-cn` provider variants (commercial plans / regional endpoints, not separate models). Cross-provider duplicate model ids: first-wins dedup.
+  - **Built-in `MODEL_CONTEXT_WINDOWS` retained** as the pure offline fallback. 117 entries, covers mainstream providers for the "first launch before fetch completes" / "Cloudflare is down" cases. The two layers share a common key normalization step (lowercase at load time) so the lookup is case-insensitive across both.
+  - **Two values were corrected** to match models.dev: `qwen3.6-max` (was 1M, now 262k) and `MiniMax-M3` (was 1M, now 512k — 512k guaranteed, 1M is the published peak).
+
+### Notes
+- The built-in `MODEL_CONTEXT_WINDOWS` table in `src/lib/model-context-windows.ts` is intentionally kept as an offline fallback. The JSON file and the built-in table should stay in sync; new entries go in both places.
+
 ## [0.0.6] - 2026-07-14
 
 ### Fixed

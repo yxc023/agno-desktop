@@ -6,6 +6,8 @@
  *     input_tokens（最近一次 LLM 调用的精确 token 数）
  *     → 这才是"最近一次 LLM 实际送入的 prompt 大小"，也就是
  *     "下次再发消息时的 context size"
+ *   - model id = 同一次事件的 `model` 字段（真实 LLM 名，不是 agent.endpoint
+ *     给的 wrapper 如 "OpenAiChat"）；没拿到时回退到 agent.model.name。
  *   - 上限 = 前端映射表查 model id 得到（见 ../lib/model-context-windows.ts）
  *
  * 注意：v1 误用了 message.metrics.input_tokens（AGNO run 级累加值），
@@ -45,6 +47,12 @@ interface ContextProgressBarProps {
   currentTokens: number | null;
   /** 当前 session 选中的 agent（用于查 model id） */
   agent?: AgAgentResponse | null;
+  /**
+   * 真实 model id（来自 SSE ModelRequestCompleted 事件的 `model` 字段）。
+   * 优先于 `agent.model.name`（后者常是 wrapper 如 "OpenAiChat"）。
+   * 常见用法：传 `useLatestModelId(sessionId)`。
+   */
+  modelId?: string | null;
   className?: string;
 }
 
@@ -159,9 +167,11 @@ function CompactRing({
 export function ContextProgressBar({
   currentTokens,
   agent,
+  modelId: modelIdOverride,
   className,
 }: ContextProgressBarProps) {
-  const modelId = resolveModelId(agent);
+  // 优先用 SSE 真实 model id（wrapper agent 名如 "OpenAiChat" 查不到任何条目）。
+  const modelId = modelIdOverride || resolveModelId(agent);
   const contextWindow = getContextWindow(modelId);
   const fallbackToDefault = modelId
     ? contextWindow === DEFAULT_CONTEXT_WINDOW

@@ -285,6 +285,22 @@ interface ChatState {
    *     per-call metrics.input_tokens
    */
   latestInputTokensBySession: Record<string, number>;
+  /**
+   * 每个 session 的"最新一次 LLM 调用的真实 model id"。
+   *
+   * 为什么需要这个：
+   * - AGNO `/agents` endpoint 返回的 `agent.model.name` 是 wrapper 名
+   *   （例如 "OpenAiChat"），不是真实 LLM model。
+   * - 真实 model id 来自 SSE `ModelRequestCompleted` 事件的 `model` 字段。
+   * - ContextProgressBar 用真实 id 去查上下文窗口大小（prefix / 远程 map），
+   *   wrapper 名查不到任何条目，会误显示 128k 兜底。
+   *
+   * 数据来源：
+   *   - streaming 期间：runner 通过 onModelRequestCompleted 回调写入
+   *   - loadHistory：扫描 runs[].events[] 找最近一次 ModelRequestCompleted
+   *     事件，读其 `model` 字段（事件结构跟 SSE 流一致）
+   */
+  latestModelIdBySession: Record<string, string>;
   setMessages: (sessionId: string, messages: ChatMessage[]) => void;
   appendMessage: (sessionId: string, message: ChatMessage) => void;
   /**
@@ -294,6 +310,11 @@ interface ChatState {
    * value 为 null 表示清空（new session / 切换到没数据的 session）。
    */
   setLatestInputTokens: (sessionId: string, value: number | null) => void;
+  /**
+   * 写入 / 清空某个 session 的"最新一次 LLM 调用的真实 model id"。
+   * value 为 null 表示清空（runner 给的是 null / 没数据时）。
+   */
+  setLatestModelId: (sessionId: string, value: string | null) => void;
   updateMessage: (
     sessionId: string,
     messageId: string,
@@ -510,6 +531,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   loadingHistoryBySession: {},
   loadedHistoryBySession: {},
   latestInputTokensBySession: {},
+  latestModelIdBySession: {},
 
   setSelectedAgent: (id, type = "agent") =>
     set({ selectedAgentId: id, selectedType: type }),
@@ -523,6 +545,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
         next[sessionId] = value;
       }
       return { latestInputTokensBySession: next };
+    }),
+
+  setLatestModelId: (sessionId, value) =>
+    set((s) => {
+      const next = { ...s.latestModelIdBySession };
+      if (value == null) {
+        delete next[sessionId];
+      } else {
+        next[sessionId] = value;
+      }
+      return { latestModelIdBySession: next };
     }),
 
   setMessages: (sessionId, messages) =>
@@ -1548,11 +1581,37 @@ export const useChatStore = create<ChatState>((set, get) => ({
         if (latestInputTokens != null) break;
       }
 
+      // 提取最近一次 LLM 调用的真实 model id（同步策略：runs 按 createdAt 倒序，
+      // 第一个含 ModelRequestCompleted 事件的 run 里取最后一个事件的 `model`）。
+      // 数据源：run.events[]——AGNO 持久化了所有 streaming 事件，ModelRequestCompleted
+      // 事件结构跟 SSE 流一致（顶层 `event` / `model` 字段）。
+      // 如果 events[] 缺失 / 不含 model 字段 → latestModelId 保持 null，
+      // ContextProgressBar 回退到 agent.model.name（wrapper 名）。
+      let latestModelId: string | null = null;
+      for (const run of sortedRunsDesc) {
+        const events = run.events;
+        if (!Array.isArray(events)) continue;
+        for (let i = events.length - 1; i >= 0; i--) {
+          const ev = events[i] as { event?: unknown; model?: unknown } | null;
+          if (
+            ev &&
+            ev.event === "ModelRequestCompleted" &&
+            typeof ev.model === "string" &&
+            ev.model.trim()
+          ) {
+            latestModelId = ev.model;
+            break;
+          }
+        }
+        if (latestModelId != null) break;
+      }
+
       // 如果自 fetch 开始后又有更新的 loadHistory 触发，跳过本轮的 setMessages
       // —— 后启动的请求会负责最终的 state 落地。
       if (loadHistoryGeneration.get(sessionId) === myGen) {
         get().setMessages(sessionId, finalMessages);
         get().setLatestInputTokens(sessionId, latestInputTokens);
+        get().setLatestModelId(sessionId, latestModelId);
       }
     } catch (err) {
       console.error("loadHistory failed", err);
@@ -1635,10 +1694,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
         // 已存在：原地更新
         get().updateAnyMessage(effectiveSessionId, message.id, () => message);
       },
-      onModelRequestCompleted: (inputTokens: number) => {
-        // AGNO 在每次 LLM 调用完成后发的 per-call token 数。
-        // 进度条直接用"最新一次"的值——它就是"当前 context size"。
+      onModelRequestCompleted: (inputTokens: number, modelId: string | null) => {
+        // AGNO 在每次 LLM 调用完成后发的 per-call token 数 + 真实 model id。
+        // 进度条直接用"最新一次"的值——它就是"当前 context size" 和
+        // "当前 model"。modelId 用来查上下文窗口；agent.endpoint 给的 wrapper
+        // 名（如 "OpenAiChat"）查不到任何条目。
         get().setLatestInputTokens(effectiveSessionId, inputTokens);
+        get().setLatestModelId(effectiveSessionId, modelId);
       },
       onSubMessageCreated: (parentMessageId: string, sub: ChatMessage) => {
         // 占位实际上由 onMessageUpdate 第一次触发时 append；这里留作 hook 给未来的 UI/逻辑。
@@ -1772,9 +1834,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
         // 顶层或 sub 都用 updateAnyMessage
         get().updateAnyMessage(session, m.id, () => m);
       },
-      onModelRequestCompleted: (inputTokens: number) => {
+      onModelRequestCompleted: (inputTokens: number, modelId: string | null) => {
         if (sessionId) {
           get().setLatestInputTokens(sessionId, inputTokens);
+          get().setLatestModelId(sessionId, modelId);
         }
       },
       onChunk: () => {},
@@ -1851,5 +1914,31 @@ export function useLatestInputTokens(sessionId: string | null): number | null {
   return useChatStore((s) => {
     if (!sessionId) return null;
     return s.latestInputTokensBySession[sessionId] ?? null;
+  });
+}
+
+/**
+ * 当前 session 最近一次 LLM 调用的真实 model id。
+ *
+ * 数据来源：
+ *   - streaming 期间：AGNO SSE `ModelRequestCompleted` 事件的 `model` 字段
+ *     （runner 通过 onModelRequestCompleted 回调实时写入）
+ *   - 加载历史时：loadHistory 扫描 runs[].events[] 找最近一次
+ *     ModelRequestCompleted 事件并取其 `model` 字段
+ *
+ * 用途：ContextProgressBar 用真实 id 查上下文窗口大小。
+ * Fallback 链（ContextProgressBar 内部处理）：
+ *   - per-session model id（这个 hook）   ← 优先
+ *   - agent.endpoint 给的 `agent.model.name`  ← 一般是 wrapper，不准
+ *   - DEFAULT_CONTEXT_WINDOW             ← 最终兜底
+ *
+ * 没拿到（新建 session / 还没第一次 LLM 响应 / runner 没传 model 字段 /
+ * events[] 里没找到 ModelRequestCompleted 事件）
+ * → 返回 null，由 ContextProgressBar 回退到 agent.model.name。
+ */
+export function useLatestModelId(sessionId: string | null): string | null {
+  return useChatStore((s) => {
+    if (!sessionId) return null;
+    return s.latestModelIdBySession[sessionId] ?? null;
   });
 }

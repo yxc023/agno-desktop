@@ -11,6 +11,7 @@ import { UserIdSetupDialog } from "@/components/common/UserIdSetupDialog";
 import { UpdateToast } from "@/components/common/UpdateToast";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useEffectiveTheme } from "@/hooks/use-effective-theme";
+import { loadRemoteContextWindows } from "@/lib/model-context-windows";
 
 export default function App() {
   const userId = useSettingsStore((s) => s.userId);
@@ -37,6 +38,13 @@ export default function App() {
       root.classList.remove("dark");
     }
   }, [resolved]);
+
+  // 启动时拉取远程 model context window 配置。
+  // 函数内部幂等（并发安全），StrictMode 双调用只触发一次 fetch。
+  // 失败静默 fallback 到内置 map，UI 仍然可用。
+  useEffect(() => {
+    loadRemoteContextWindows().catch(() => {});
+  }, []);
 
   return (
     <BrowserRouter>

@@ -38,9 +38,12 @@ export interface ChatRunnerCallbacks {
   /**
    * 每次 LLM 调用完成时触发（AGNO ModelRequestCompleted 事件）。
    * inputTokens 是该次调用的精确 token 数（per-call），不是 run 内的累加。
-   * 用于 context 进度条：取"最后一次"的值即可得到"当前 context size"。
+   * modelId 是该次调用的真实模型 id（来自事件 `model` 字段，跟
+   * agent endpoint 返回的 wrapper 名不同，例如 "OpenAiChat"）。
+   * 上下文窗口查询用 modelId；两者都可用于 context 进度条：
+   * "最后一次"的值就是"当前 context size" 和 "当前 model"。
    */
-  onModelRequestCompleted?: (inputTokens: number) => void;
+  onModelRequestCompleted?: (inputTokens: number, modelId: string | null) => void;
   /** 一个新的 sub-agent message 被创建（用于在 store 里预先占位等）。 */
   onSubMessageCreated?: (parentMessageId: string, sub: ChatMessage) => void;
   /** sub 消息的最终化（completed/error/cancelled），用于聚合状态。 */
@@ -537,12 +540,19 @@ export class ChatRunner {
       }
 
       case "ModelRequestCompleted": {
-        // AGNO 在每次 LLM 调用完成后发的事件，含 per-call input_tokens。
-        // 这是"单次 context size"——比 run.metrics.input_tokens（累加）更准。
-        // chat-store 的 onModelRequestCompleted 回调把它写到
-        // latestInputTokensBySession，供 ContextProgressBar 读取。
+        // AGNO 在每次 LLM 调用完成后发的事件，含 per-call input_tokens
+        // 和真实 model id。这是"单次 context size"——比 run.metrics.input_tokens
+        // （累加）更准；model id 也是 agent endpoint 给不出的真实 LLM 名
+        // （endpoint 给的是 wrapper，比如 "OpenAiChat"）。
+        // chat-store 的 onModelRequestCompleted 回调把它们写到
+        // latestInputTokensBySession / latestModelIdBySession，
+        // 供 ContextProgressBar 读取。
         if (typeof data.input_tokens === "number") {
-          callbacks.onModelRequestCompleted?.(data.input_tokens);
+          const modelId =
+            typeof data.model === "string" && data.model.trim()
+              ? data.model
+              : null;
+          callbacks.onModelRequestCompleted?.(data.input_tokens, modelId);
         }
         break;
       }
