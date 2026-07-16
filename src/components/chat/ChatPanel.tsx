@@ -18,7 +18,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { MessageBubble } from "./MessageBubble";
 import { MessageInput } from "./MessageInput";
 import { ContextProgressBar } from "./ContextProgressBar";
-import { useChatStore, useCurrentSessionMessages, useLatestInputTokens } from "@/stores/chat-store";
+import { useChatStore, useCurrentSessionMessages, useLatestInputTokens, useLatestModelId } from "@/stores/chat-store";
 import { useSessionsStore } from "@/stores/sessions-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import {
@@ -68,6 +68,7 @@ export function ChatPanel() {
   const currentSessionId = useSessionsStore((s) => s.currentSessionId);
   const messages = useCurrentSessionMessages(currentSessionId);
   const currentInputTokens = useLatestInputTokens(currentSessionId);
+  const currentModelId = useLatestModelId(currentSessionId);
   const loadingHistory = useChatStore((s) =>
     currentSessionId ? s.loadingHistoryBySession[currentSessionId] ?? false : false
   );
@@ -319,6 +320,7 @@ export function ChatPanel() {
         <ContextProgressBar
           currentTokens={currentInputTokens}
           agent={selectedAgent}
+          modelId={currentModelId}
         />
 
         <div className="flex items-center gap-1.5">
