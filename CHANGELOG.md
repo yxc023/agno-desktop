@@ -33,7 +33,17 @@ All notable changes to Agno Desktop are documented here. Versions follow [Semant
 
 ## Unreleased
 
+### Added
+- **Tool-call UI is now readable and copy-pasteable as a unit.** Previously the JSON dump on every tool was opaque — you could only copy `args` or `result` separately, and shell commands looked like every other tool. `src/components/chat/ToolCallCard.tsx` now renders tool-specific views:
+    - `execute_command` / `shell`: command as a `bash` code block, remaining args as a key-value table, output split into `stdout` / `stderr` with the exit code.
+    - `read_file` / `write_file` / `list_directory`: file path as a header chip; content shown in a syntax-highlighted block with the language inferred from the file extension (`src/lib/tool-render-utils.ts:39`).
+    - `edit_file` / `str_replace` / `edit`: a unified diff view (line-level LCS, `src/lib/tool-render-utils.ts:78`) with green-add / red-del rows instead of JSON.
+    - All other tools: key-value table for args, JSON fallback for results.
+  Plus a **new "copy entire tool call" button** in the header — one click puts name + status + args + error + result + duration on the clipboard as Markdown (`formatToolCallForCopy` in `src/lib/tool-render-utils.ts:127`). Especially useful when pasting a tool invocation into an issue or another chat.
+- **Main left sidebar (AppShell) is now drag-resizable**, mirroring the chat-page column behavior. New `sidebarWidth` field in `src/stores/settings-store.ts:46` persists the chosen width (200–360px range). Double-click the handle to reset to default. Collapsed mode keeps the fixed 56px width and hides the handle. Implementation is shared via two new components — `src/components/common/VerticalResizeHandle.tsx` and `src/components/common/useColumnResize.ts` — replacing the inline `ResizeHandle` in `src/pages/ChatPage.tsx`.
+
 ### Fixed
+- **Input box now clears immediately on send.** Previously `MessageInput.tsx:59` cleared the textarea only *after* `await sendMessage(...)` resolved, so a slow / hanging AGNO request would keep the user's text frozen on screen and they'd have to delete it manually to type the next message. Now the text and files are cleared *synchronously* before the await (`src/components/chat/MessageInput.tsx:57`), letting the user keep typing immediately. If `sendMessage` throws, the original text is restored so the user can retry without retyping.
 - **Slight jitter + brief blank flash in the chat area during streaming.** The chat panel used to re-render and re-parse the markdown of every message on every SSE chunk, which combined with the autoscroll `useEffect` (whose `messages` dep kept `scrollTop`/`scrollHeight` reads firing) caused two user-visible artifacts:
     1. While the assistant was streaming, the entire message area would micro-jitter as `react-markdown` (with `rehype-highlight`'s `detect: true`) re-ran on every chunk, even for already-finalized messages.
     2. Quickly scrolling up/down during streaming would briefly flash blank because the browser was busy re-parsing markdown instead of painting frames.

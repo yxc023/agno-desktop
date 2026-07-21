@@ -68,3 +68,17 @@ export function copyToClipboard(text: string): Promise<boolean> {
   }
   return Promise.resolve(false);
 }
+
+/**
+ * 把像素宽度钳制到 [min, max] 区间。
+ * - NaN / undefined 兜底成 min
+ * - 四舍五入到整数（CSS px 不接受小数）
+ */
+export function clampWidth(
+  value: number,
+  min: number,
+  max: number
+): number {
+  if (Number.isNaN(value) || value == null) return min;
+  return Math.max(min, Math.min(max, Math.round(value)));
+}

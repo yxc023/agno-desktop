@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Link, NavLink, Outlet } from "react-router-dom";
+import { NavLink, Outlet } from "react-router-dom";
 import {
   Boxes,
   MessageSquare,
@@ -25,6 +25,19 @@ import { Logo, LogoText } from "@/components/common/Logo";
 import { useUIStore } from "@/stores/ui-store";
 import { InstanceFormDialog } from "@/components/instances/InstanceFormDialog";
 import { AppTitleBar } from "@/components/layout/AppTitleBar";
+import { VerticalResizeHandle } from "@/components/common/VerticalResizeHandle";
+import { useColumnResize } from "@/components/common/useColumnResize";
+import { clampWidth } from "@/lib/utils";
+
+/**
+ * 主侧栏宽度约束：
+ * - 最小 200：保证"实例 / 对话 / 记忆 / 设置"四行 nav label 不被截断
+ * - 最大 360：超过这个值 nav 视觉上会"压扁"主区域，留白也显得空洞
+ */
+const SIDEBAR_MIN = 200;
+const SIDEBAR_MAX = 360;
+const SIDEBAR_DEFAULT = 244;
+const SIDEBAR_COLLAPSED = 56;
 
 interface NavItem {
   to: string;
@@ -101,13 +114,49 @@ function NavItem({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
 export function AppShell() {
   const collapsed = useSettingsStore((s) => s.sidebarCollapsed);
   const update = useSettingsStore((s) => s.update);
+  const persistedSidebarWidth = useSettingsStore((s) => s.sidebarWidth);
   const active = useActiveInstance();
   const setActive = useInstancesStore((s) => s.setActiveInstance);
-  const instances = useInstancesStore((s) => s.instances);
   const setShowAdd = useUIStore((s) => s.setShowAddInstance);
   // 把 showAddInstance 也订阅一份，让 AppShell 跟随这个状态而 re-render
   // ——这是把 dialog 提到全局的关键。
   const showAdd = useUIStore((s) => s.showAddInstance);
+
+  // 展开态下支持拖动调整宽度；折叠态固定 56px（不显示 handle，避免视觉噪声）
+  const sidebar = useColumnResize({
+    initial: clampWidth(
+      persistedSidebarWidth ?? SIDEBAR_DEFAULT,
+      SIDEBAR_MIN,
+      SIDEBAR_MAX
+    ),
+    min: SIDEBAR_MIN,
+    max: SIDEBAR_MAX,
+    direction: "right",
+    persist: (w) => update({ sidebarWidth: w }),
+  });
+
+  // 首次挂载若 store 仍为 undefined，写一次默认值（保持单点 truth）
+  React.useEffect(() => {
+    if (persistedSidebarWidth == null) {
+      update({ sidebarWidth: SIDEBAR_DEFAULT });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 折叠时把 width 强制重置到 default：避免"先折叠→拖宽→展开" 后宽度被卡住。
+  // 拖动 hook 自己的 state 不会感知 collapsed 切换，所以这里同步一次。
+  React.useEffect(() => {
+    if (!collapsed) {
+      sidebar.setWidth(
+        clampWidth(
+          persistedSidebarWidth ?? SIDEBAR_DEFAULT,
+          SIDEBAR_MIN,
+          SIDEBAR_MAX
+        )
+      );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [collapsed]);
 
   return (
     <TooltipProvider delayDuration={500}>
@@ -122,9 +171,12 @@ export function AppShell() {
             ============================================================ */}
         <aside
           className={cn(
-            "flex flex-col border-r border-sidebar-border bg-sidebar/80 backdrop-blur-sm transition-[width] duration-200 pt-7",
-            collapsed ? "w-[56px]" : "w-[244px]"
+            "flex shrink-0 flex-col border-r border-sidebar-border bg-sidebar/80 backdrop-blur-sm transition-[width] duration-200 pt-7",
+            collapsed ? "" : ""
           )}
+          style={{
+            width: collapsed ? SIDEBAR_COLLAPSED : sidebar.width,
+          }}
         >
           {/* Logo */}
           <div
@@ -192,6 +244,16 @@ export function AppShell() {
             </Tooltip>
           </div>
         </aside>
+
+        {/* 展开态才显示 resize handle —— 折叠态固定 56px，让 handle 反而显得突兀 */}
+        {!collapsed && (
+          <VerticalResizeHandle
+            ariaLabel="拖动调整主侧栏宽度（双击重置）"
+            onMouseDown={sidebar.dragHandlers.onMouseDown}
+            onDoubleClick={sidebar.dragHandlers.onDoubleClick}
+            onMouseUp={sidebar.persist}
+          />
+        )}
 
         {/* ============================================================
             主区域

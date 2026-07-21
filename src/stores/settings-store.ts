@@ -43,6 +43,8 @@ export interface Settings {
   /** ChatPage 分栏宽度（持久化）——左 sessions 栏、右 InstancesPanel 栏 */
   chatSessionsWidth?: number;
   chatRightWidth?: number;
+  /** 主侧栏（AppShell 左侧导航）展开时的宽度（持久化） */
+  sidebarWidth?: number;
   /** 启动时自动检查更新（仅 Tauri desktop 生效；browser / dev 默认 no-op） */
   autoCheckUpdate: boolean;
 }
