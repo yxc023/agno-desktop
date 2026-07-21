@@ -88,6 +88,11 @@ export function ChatPanel() {
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const [stickToBottom, setStickToBottom] = useState(true);
+  // stickToBottom 的最新值 via ref —— 让 ResizeObserver 回调（脱钩 React
+  // 渲染）始终读到最新值而不需把 stickToBottom 放依赖里（那会让 effect
+  // 在每次 onScroll 时重 attach）。
+  const stickToBottomRef = useRef(true);
+  stickToBottomRef.current = stickToBottom;
 
   // 进入 chat 页面时立即拉取 agents + sessions
   useEffect(() => {
@@ -110,14 +115,50 @@ export function ChatPanel() {
     }
   }, [currentSessionId, active, loadedHistory, loadingHistory, loadHistory]);
 
+  /**
+   * Autoscroll 通过 ResizeObserver 监听 scroll 容器尺寸变化触发，与
+   * `messages` 引用解耦 —— 之前把 `messages` 放 useEffect deps 里会让每次
+   * streaming chunk（每个 chunk 都让 messagesBySession 拿到新 ref）都重新
+   * 计算 scrollTop / scrollHeight（layout thrashing），叠加 markdown 重 parse
+   * → 用户描述的"持续输出时整体轻微抖动"+"快速上下滑时短暂空白"。
+   *
+   * 新策略：让浏览器自己告诉我们"内容高度变了"——靠 ResizeObserver 触发。
+   * 只在 stickToBottom + autoScroll 开启时才滚到底。
+   */
   useEffect(() => {
-    if (autoScroll && stickToBottom && scrollRef.current) {
-      const el = scrollRef.current;
+    if (!autoScroll) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => {
+      if (!stickToBottomRef.current) return;
       requestAnimationFrame(() => {
-        el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+        if (!stickToBottomRef.current) return;
+        const root = scrollRef.current;
+        if (!root) return;
+        root.scrollTo({ top: root.scrollHeight, behavior: "smooth" });
       });
-    }
-  }, [messages, autoScroll, stickToBottom]);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [autoScroll]);
+
+  /**
+   * 兜底：切换 session / 第一次挂载 / 用户点 "back to bottom" 时也可能
+   * 没有 ResizeObserver 触发（scrollHeight 没变化），但仍要滚到底。
+   *
+   * 依赖里**故意**不放 `messages` —— 只在以下场景触发：
+   *   - currentSessionId 切换（用户换 session）
+   *   - loadedHistory 变化（历史消息刚刚加载完毕）
+   *
+   * streaming 期间的滚动完全交给上面的 ResizeObserver。
+   */
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    requestAnimationFrame(() => {
+      el.scrollTo({ top: el.scrollHeight });
+    });
+  }, [currentSessionId, loadedHistory]);
 
   if (!active) {
     return null;

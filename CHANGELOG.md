@@ -31,6 +31,23 @@ All notable changes to Agno Desktop are documented here. Versions follow [Semant
 ### Notes
 - The built-in `MODEL_CONTEXT_WINDOWS` table in `src/lib/model-context-windows.ts` is intentionally kept as an offline fallback. The JSON file and the built-in table should stay in sync; new entries go in both places.
 
+## Unreleased
+
+### Fixed
+- **Slight jitter + brief blank flash in the chat area during streaming.** The chat panel used to re-render and re-parse the markdown of every message on every SSE chunk, which combined with the autoscroll `useEffect` (whose `messages` dep kept `scrollTop`/`scrollHeight` reads firing) caused two user-visible artifacts:
+    1. While the assistant was streaming, the entire message area would micro-jitter as `react-markdown` (with `rehype-highlight`'s `detect: true`) re-ran on every chunk, even for already-finalized messages.
+    2. Quickly scrolling up/down during streaming would briefly flash blank because the browser was busy re-parsing markdown instead of painting frames.
+
+  Three coordinated optimizations address both:
+    - **`<Markdown>` is now `React.memo`-wrapped.** Text `children` is a primitive, so a deep-equal on props is sufficient to skip re-parse. With `chat-store.replaceInTree` keeping unchanged siblings' references, historical message bails out entirely on streaming ticks.
+    - **New `<MarkdownStream>` (used by `MessageContent` for text parts) splits a streaming text into a "stable prefix" and a "live tail" at the last paragraph / code-fence boundary.** The prefix goes through `<Markdown>` (cache-friendly via memo); the tail is rendered as plain text with a streaming cursor. During streaming, most ticks only grow the tail — the prefix ref stays stable and its parsed DOM is reused. Inspired by OpenCode's `packages/session-ui/src/components/markdown-stream.ts`.
+    - **Autoscroll no longer depends on `messages`.** A `ResizeObserver` watches the scroll container's size and triggers `scrollTo` only when the actual rendered height changed. Replaces the previous `useEffect` that ran on every `messages` ref change (every SSE chunk), eliminating the per-chunk forced layout.
+
+  Net effect: streaming is visibly smoother, and `react-markdown` does at most O(1 paragraph) parse work per chunk instead of O(everything-so-far) work per chunk.
+
+### Notes
+- No behavior or UX changes outside of streaming smoothness — markdown still renders the same final output (covered by `tests/markdown-stream-render.test.ts` and `tests/markdown-codeblock.test.ts`).
+
 ## [0.0.6] - 2026-07-14
 
 ### Fixed

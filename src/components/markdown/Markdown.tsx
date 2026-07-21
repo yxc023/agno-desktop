@@ -1,4 +1,4 @@
-import { Fragment, type ReactNode } from "react";
+import { Fragment, memo, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
@@ -15,7 +15,25 @@ interface Props {
   streaming?: boolean;
 }
 
-export function Markdown({ children, className, streaming }: Props) {
+/**
+ * Markdown — 把 markdown 字符串渲染成 HTML。
+ *
+ * 性能合约（性能优化 round 1）：
+ * - 用 `React.memo` 包装：props 完全 shallow-equal 时**跳过整次 render**，
+ *   避免在 ChatPanel 整体重 render 时连带重新解析已确定不变的 markdown。
+ *   这是 streaming 期间的关键优化 —— ChatPanel 每次接 chunk 都会 rerender
+ *   → 之前会让所有 message 的 markdown 都重 parse → 主线程吃满。
+ * - props 故意保持简单（children / className / streaming 都是 primitive
+ *   类型），React.memo 的默认浅比较足够；不需要自定义 areEqual。
+ *
+ * 进一步优化：流式场景下应使用 `<MarkdownStream>` —— 它会把 markdown 切为
+ * 「稳定 prefix」+「实时 tail」，让本组件在最坏情况也只重 parse 增量段落。
+ */
+export const Markdown = memo(function Markdown({
+  children,
+  className,
+  streaming,
+}: Props) {
   return (
     <div
       className={cn(
@@ -70,7 +88,7 @@ export function Markdown({ children, className, streaming }: Props) {
               );
             }
 
-            // block code：把 children（已经是 hljs token span 树）原样传给 CodeBlock，
+            // block code：把 children（已经是 hljs token span 树）原样传给 CodeBlock,
             // 保留高亮。CodeBlock 自己会用 extractText(children) 拿到纯文本做"复制"。
             return (
               <CodeBlock language={language}>{children as ReactNode}</CodeBlock>
@@ -110,4 +128,4 @@ export function Markdown({ children, className, streaming }: Props) {
       </ReactMarkdown>
     </div>
   );
-}
+});

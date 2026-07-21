@@ -5,7 +5,7 @@ import {
   Bot,
   PanelRightOpen,
 } from "lucide-react";
-import { useState } from "react";
+import { memo, useCallback, useState } from "react";
 import { cn, copyToClipboard, formatRelativeTime } from "@/lib/utils";
 import { Markdown } from "@/components/markdown/Markdown";
 import { Button } from "@/components/ui/button";
@@ -19,7 +19,19 @@ interface Props {
   onCopy?: () => void;
 }
 
-export function MessageBubble({ message, onCopy }: Props) {
+/**
+ * MessageBubble — 单条 chat message 的外壳。
+ *
+ * 性能合约（performance round 1）：
+ * - 整组件用 `React.memo` 包装。`chat-store` 的 `replaceInTree` 在
+ *   `updateAnyMessage` 时，**未变更的兄弟 message 保持原引用**（返回 `m`），
+ *   所以只有真正变化的那条 message 会拿到新 ref；其他走 memo skip，
+ *   React 完全不重 render 它们。
+ * - 内部按 role 分发到 UserMessage / AssistantMessage / SystemMessage，
+ *   每个分支**单独** memo 包裹。每个分支有独立内部 state（`copied`），
+ *   `memo` 不会跨实例共享 state，外部新 ref 才会进入。
+ */
+export const MessageBubble = memo(function MessageBubble({ message, onCopy }: Props) {
   const isUser = message.role === "user";
   const isSystem = message.role === "system";
 
@@ -32,9 +44,9 @@ export function MessageBubble({ message, onCopy }: Props) {
   }
 
   return <AssistantMessage message={message} onCopy={onCopy} />;
-}
+});
 
-function UserMessage({ message, onCopy }: Props) {
+const UserMessage = memo(function UserMessage({ message, onCopy }: Props) {
   const [copied, setCopied] = useState(false);
   const text = message.parts
     .map((p) => (p.type === "text" ? p.text : ""))
@@ -93,15 +105,24 @@ function UserMessage({ message, onCopy }: Props) {
       </div>
     </div>
   );
-}
+});
 
-function AssistantMessage({ message, onCopy }: Props) {
+const AssistantMessage = memo(function AssistantMessage({ message, onCopy }: Props) {
   const [copied, setCopied] = useState(false);
   const hasText = message.parts.some((p) => p.type === "text");
   const isStreaming = message.status === "streaming";
   const subMessages = message.subMessages ?? [];
 
   const openPanel = useUIStore((s) => s.openSubAgentPanel);
+
+  // 把 `message.sessionId` / `openPanel` 锁成稳定依赖，让 React.memo
+  // 在 MessageBubble 之外重 render 时，MessageContent 内部浅比较能识别
+  // `onOpenSubAgent` 引用未变并跳过自身 render。
+  const onOpenSubAgent = useCallback(
+    (id: string) =>
+      message.sessionId ? openPanel(message.sessionId, id) : undefined,
+    [message.sessionId, openPanel]
+  );
 
   const text = message.parts
     .map((p) => (p.type === "text" ? p.text : ""))
@@ -125,14 +146,7 @@ function AssistantMessage({ message, onCopy }: Props) {
       )}
     >
       <div className="mx-auto max-w-4xl">
-        <MessageContent
-          message={message}
-          onOpenSubAgent={(id) =>
-            message.sessionId
-              ? openPanel(message.sessionId, id)
-              : undefined
-          }
-        />
+        <MessageContent message={message} onOpenSubAgent={onOpenSubAgent} />
 
         {/* 历史/未通过 marker 暴露的 sub-agent 的兜底入口 */}
         <SubAgentFooterAssistant
@@ -157,7 +171,7 @@ function AssistantMessage({ message, onCopy }: Props) {
       </div>
     </div>
   );
-}
+});
 
 /* ---------------------------------------------------------------- */
 /* Sub-agent 兜底 footer（当 marker 缺失时的入口）                  */
@@ -279,7 +293,7 @@ function MessageFooter({
   );
 }
 
-function SystemMessage({ message }: Props) {
+const SystemMessage = memo(function SystemMessage({ message }: Props) {
   return (
     <div className="border-y border-dashed border-border bg-muted/30 px-4 py-2 font-mono text-[11px] text-muted-foreground">
       <div className="mx-auto max-w-4xl">
@@ -290,4 +304,4 @@ function SystemMessage({ message }: Props) {
       </div>
     </div>
   );
-}
+});

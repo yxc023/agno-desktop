@@ -9,6 +9,14 @@
  * 跳转行为由 callback 注入：
  *   - 主流程用 onOpenSubAgent (replace stack)
  *   - 侧栏用 onPushSubAgent (push stack)
+ *
+ * 性能合约（performance round 1）：
+ * - `MessageContent` 自身是 memo 包裹；`PartRenderer` 同样 memo 化。
+ *   上层 `MessageBubble` 在 chat-store updateAnyMessage 后只有变更的那条
+ *   message 拿到新的 ref，历史消息整条链路走 memo skip，React 完全不重 render。
+ * - 文本 part 改用 `<MarkdownStream>`（streaming 时切 prefix/tail，prefix 用
+ *   `<Markdown>` 解析，tail 是 plain text + cursor）—— 见
+ *   `src/components/markdown/MarkdownStream.tsx`。
  */
 
 import {
@@ -18,13 +26,13 @@ import {
   ArrowRight,
   Activity,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
-import { Markdown } from "@/components/markdown/Markdown";
+import { MarkdownStream } from "@/components/markdown/MarkdownStream";
 import { openExternalUrl } from "@/lib/open-external-url";
 import { ReasoningBlock } from "./ReasoningBlock";
 import { ToolCallCard } from "./ToolCallCard";
-import { useChatStore, useSubMessageById } from "@/stores/chat-store";
+import { useSubMessageById } from "@/stores/chat-store";
 import type { ChatMessage, MessagePart } from "@/lib/message-types";
 
 interface MessageContentProps {
@@ -40,7 +48,7 @@ interface MessageContentProps {
   loadingHint?: "main" | "sub-agent";
 }
 
-export function MessageContent({
+export const MessageContent = memo(function MessageContent({
   message,
   onOpenSubAgent,
   loadingHint = "main",
@@ -80,9 +88,9 @@ export function MessageContent({
       ))}
     </div>
   );
-}
+});
 
-function PartRenderer({
+const PartRenderer = memo(function PartRenderer({
   part,
   message,
   index,
@@ -101,7 +109,7 @@ function PartRenderer({
     case "text":
       return (
         <div className="text-[14px] leading-[1.7] text-foreground/95">
-          <Markdown streaming={streaming}>{part.text}</Markdown>
+          <MarkdownStream streaming={streaming}>{part.text}</MarkdownStream>
         </div>
       );
 
@@ -207,7 +215,7 @@ function PartRenderer({
     default:
       return null;
   }
-}
+});
 
 /**
  * Sub-agent 入口 chip
