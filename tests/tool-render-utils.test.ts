@@ -15,10 +15,15 @@
 
 import {
   pickCommand,
+  pickCwd,
+  pickShellOutput,
+  isShellTool,
   inferLang,
   computeLcs,
   formatToolCallForCopy,
   truncateText,
+  isReadLikeTool,
+  pickToolIdentifier,
 } from "../src/lib/tool-render-utils";
 import type { ToolCallPart } from "../src/lib/message-types";
 
@@ -48,19 +53,116 @@ function deepEq(actual: unknown, expected: unknown, msg: string): void {
 }
 
 function main(): void {
-  console.log("=== pickCommand: 识别 shell 命令 ===");
+  console.log("=== pickCommand: 识别 shell 命令（字符串形式）===");
   {
     eq(pickCommand({ command: "ls -la" }), "ls -la", "key=command");
     eq(pickCommand({ cmd: "echo hi" }), "echo hi", "key=cmd");
     eq(pickCommand({ shell_command: "pwd" }), "pwd", "key=shell_command");
+    eq(pickCommand({ script: "exit 0" }), "exit 0", "key=script");
     eq(
       pickCommand({ command: ["git", "log", "--oneline"] }),
       "git log --oneline",
-      "数组形式用空格 join"
+      "command 数组形式用空格 join"
     );
     eq(pickCommand(undefined), undefined, "undefined args → undefined");
     eq(pickCommand({}), undefined, "空 args → undefined");
     eq(pickCommand({ cwd: "/tmp" }), undefined, "没有 command → undefined");
+  }
+
+  console.log("\n=== pickCommand: run_command 风格的 args 数组形式 ===");
+  {
+    eq(
+      pickCommand({ args: ["ls", "-la", "/tmp"] }),
+      "ls -la /tmp",
+      "key=args（数组）"
+    );
+    eq(
+      pickCommand({ argv: ["echo", "hi"] }),
+      "echo hi",
+      "key=argv"
+    );
+    eq(
+      pickCommand({ command_args: ["npm", "install"] }),
+      "npm install",
+      "key=command_args"
+    );
+    eq(
+      pickCommand(["python", "-c", "print(1)"]),
+      "python -c print(1)",
+      "args 本身是数组（罕见签名）"
+    );
+  }
+
+  console.log("\n=== pickCommand: 命令优先于 args 数组 ===");
+  {
+    eq(
+      pickCommand({ command: "echo main", args: ["ignored"] }),
+      "echo main",
+      "command 字段优先"
+    );
+    eq(
+      pickCommand({ cmd: ["a", "b"], args: ["c", "d"] }),
+      "a b",
+      "cmd 数组优先于 args 数组"
+    );
+  }
+
+  console.log("\n=== pickCwd: 识别工作目录 ===");
+  {
+    eq(pickCwd({ cwd: "/tmp" }), "/tmp", "key=cwd");
+    eq(pickCwd({ workdir: "/var" }), "/var", "key=workdir");
+    eq(pickCwd({ working_dir: "/home" }), "/home", "key=working_dir");
+    eq(pickCwd({ directory: "/root" }), "/root", "key=directory");
+    eq(pickCwd(undefined), undefined, "undefined → undefined");
+    eq(pickCwd({ cwd: 123 }), undefined, "非字符串 → undefined");
+  }
+
+  console.log("\n=== isReadLikeTool: read-like 判定 ===");
+  {
+    assert(isReadLikeTool("read_file"), "read_file 是 read-like");
+    assert(isReadLikeTool("list_directory"), "list_directory 是 read-like");
+    assert(
+      isReadLikeTool("query_my_codebase"),
+      "query_my_codebase 是 read-like"
+    );
+    assert(
+      isReadLikeTool("search_knowledge"),
+      "search_knowledge 是 read-like"
+    );
+    assert(!isReadLikeTool("write_file"), "write_file 不是 read-like");
+    assert(!isReadLikeTool("edit_file"), "edit_file 不是 read-like");
+    assert(!isReadLikeTool("execute_command"), "execute_command 不是 read-like");
+    assert(!isReadLikeTool("web_search"), "web_search 不是 read-like（折叠会损失结构）");
+    assert(!isReadLikeTool("unknown_tool"), "未知工具默认 false");
+  }
+
+  console.log("\n=== pickToolIdentifier: read-like 工具的标识 ===");
+  {
+    eq(
+      pickToolIdentifier("read_file", { file_path: "/a/b.ts" }),
+      "/a/b.ts",
+      "read_file → file_path"
+    );
+    eq(
+      pickToolIdentifier("list_directory", { directory: "/src" }),
+      "/src",
+      "list_directory → directory"
+    );
+    eq(
+      pickToolIdentifier("query_my_codebase", { question: "what is X" }),
+      "what is X",
+      "query_my_codebase → question"
+    );
+    eq(
+      pickToolIdentifier("search_knowledge", { query: "AGNO" }),
+      "AGNO",
+      "search_knowledge → query"
+    );
+    eq(
+      pickToolIdentifier("read_file", { foo: "bar" }),
+      undefined,
+      "没有识别字段 → undefined"
+    );
   }
 
   console.log("\n=== inferLang: 文件路径 → 高亮语言 ===");
@@ -149,7 +251,13 @@ function main(): void {
     assert(out.includes("**Input:**"), "包含 Input 段");
     assert(out.includes('"command": "ls -la"'), "input 含 command");
     assert(out.includes("**Output:**"), "包含 Output 段");
-    assert(out.includes('"stdout":'), "output 是 JSON 形式");
+    // shell 工具的 stdout 现在以纯文本块输出（不再是 JSON 整体），
+    // 用户粘贴到 issue / 文档里直接可读。
+    assert(
+      out.includes("```\nfile1\nfile2\n```"),
+      "shell stdout 输出为 plain text 块"
+    );
+    assert(out.includes("exit: 0"), "exit code 单飞显示");
     assert(out.includes("_duration: 234ms_"), "duration 标注");
   }
 
@@ -230,6 +338,301 @@ function main(): void {
     const out = truncateText("a".repeat(200), 50);
     assert(out.length > 50, "长于 max 截断");
     assert(out.includes("... (truncated, total 200 chars)"), "标注总长");
+  }
+
+  console.log("\n=== isShellTool: 工具名识别 ===");
+  {
+    assert(isShellTool("run_command"), "run_command");
+    assert(isShellTool("execute_command"), "execute_command");
+    assert(isShellTool("shell"), "shell");
+    assert(isShellTool("bash"), "bash");
+    assert(!isShellTool("read_file"), "read_file 不是 shell");
+    assert(!isShellTool("web_search"), "web_search 不是 shell");
+    assert(!isShellTool("unknown"), "未知不是 shell");
+  }
+
+  console.log("\n=== pickShellOutput: AGNO 各种 result 形态 ===");
+  {
+    deepEq(
+      pickShellOutput({ stdout: "x", exit_code: 0 }),
+      { stdout: "x", exit: 0 },
+      "{stdout, exit_code}"
+    );
+    deepEq(
+      pickShellOutput({ output: "y", exitCode: 1 }),
+      { stdout: "y", exit: 1 },
+      "{output, exitCode}（legacy）"
+    );
+    deepEq(
+      pickShellOutput({ result: "/home/user", exit_code: 0 }),
+      { stdout: "/home/user", exit: 0 },
+      "{result, exit_code}（AGNO 某些版本直接包一层）"
+    );
+    deepEq(
+      pickShellOutput({ stdout: "out", stderr: "err", exit_code: 2 }),
+      { stdout: "out", stderr: "err", exit: 2 },
+      "{stdout, stderr, exit_code} 三段都有"
+    );
+    deepEq(
+      pickShellOutput("raw string"),
+      { stdout: "raw string" },
+      "纯字符串 → stdout"
+    );
+    deepEq(
+      pickShellOutput(["line1", "line2"]),
+      { stdout: "line1\nline2" },
+      "数组 → stdout（用 \\n join）"
+    );
+    deepEq(
+      pickShellOutput({ stdout: ["a", "b"] }),
+      { stdout: "a\nb" },
+      "stdout 字段是数组也 join"
+    );
+    deepEq(pickShellOutput(null), {}, "null → empty");
+    deepEq(pickShellOutput(undefined), {}, "undefined → empty");
+    deepEq(
+      pickShellOutput({}),
+      {},
+      "空对象 → empty"
+    );
+
+    // 不识别字段：pickShellOutput 全部 undefined，调用方决定怎么 fallback
+    deepEq(
+      pickShellOutput({ foo: "bar", baz: 42 }),
+      {},
+      "非标准字段 → empty（不强行猜）"
+    );
+  }
+
+  console.log("\n=== pickShellOutput: 追加覆盖更多 AGNO 形态 ===");
+  {
+    deepEq(
+      pickShellOutput({ outputText: "y" }),
+      { stdout: "y" },
+      "{outputText}（驼峰命名）"
+    );
+    deepEq(
+      pickShellOutput({ response: "z" }),
+      { stdout: "z" },
+      "{response}"
+    );
+    deepEq(
+      pickShellOutput({ response_text: "hello", exit_code: 0 }),
+      { stdout: "hello", exit: 0 },
+      "{response_text, exit_code}"
+    );
+    deepEq(
+      pickShellOutput({ return_value: "rv" }),
+      { stdout: "rv" },
+      "{return_value}"
+    );
+    deepEq(
+      pickShellOutput({ message: "msg" }),
+      { stdout: "msg" },
+      "{message}"
+    );
+
+    // Anthropic-style content array (顶层)
+    deepEq(
+      pickShellOutput([{ type: "text", text: "first" }]),
+      { stdout: "first" },
+      "顶层 Anthropic-style content array（单元素）"
+    );
+    deepEq(
+      pickShellOutput([
+        { type: "text", text: "first" },
+        { type: "text", text: "second" },
+      ]),
+      { stdout: "first\nsecond" },
+      "顶层 Anthropic-style content array（多元素用 \\n join）"
+    );
+
+    // 嵌套在 content 字段里的 Anthropic-style array
+    deepEq(
+      pickShellOutput({
+        content: [{ type: "text", text: "nested" }],
+        exit_code: 0,
+      }),
+      { stdout: "nested", exit: 0 },
+      "嵌套 Anthropic-style content array"
+    );
+
+    // 旧 bug 修复回归：[object Object] 不再出现
+    deepEq(
+      pickShellOutput([{ type: "text", text: "anthropic" }]),
+      { stdout: "anthropic" },
+      "Anthropic 数组不再渲染成 '[object Object]'"
+    );
+  }
+
+  console.log("\n=== formatToolCallForCopy: shell 工具 result 形态全覆盖 ===");
+  {
+    // 工具函数：从 Output 段之后到 EOF / Duration 之间的文本，用来精确断言。
+    function outputSection(out: string): string {
+      const i = out.indexOf("**Output:**");
+      if (i < 0) return "";
+      const rest = out.slice(i);
+      const durIdx = rest.indexOf("_duration:");
+      return durIdx < 0 ? rest : rest.slice(0, durIdx);
+    }
+
+    // 1. 字符串 result
+    {
+      const out = formatToolCallForCopy({
+        type: "tool_call",
+        toolCallId: "s1",
+        toolName: "run_command",
+        args: { args: ["echo", "hi"] },
+        result: "hi\n",
+        status: "completed",
+        startedAt: 0,
+      } as any);
+      const o = outputSection(out);
+      assert(o.includes("```\nhi\n```"), "字符串 result 输出为 plain text");
+      assert(
+        !o.includes("```json"),
+        "Output 段没有 JSON 包裹（args 段有 JSON 没事）"
+      );
+    }
+
+    // 2. {stdout, exit_code}
+    {
+      const out = formatToolCallForCopy({
+        type: "tool_call",
+        toolCallId: "s2",
+        toolName: "execute_command",
+        args: { command: "ls" },
+        result: { stdout: "a\nb", exit_code: 0 },
+        status: "completed",
+        startedAt: 0,
+      } as any);
+      const o = outputSection(out);
+      assert(o.includes("```\na\nb\n```"), "stdout 干净输出");
+      assert(o.includes("exit: 0"), "exit 单飞");
+    }
+
+    // 3. {result, exit_code} —— 这是用户遇到 bug 的格式
+    {
+      const out = formatToolCallForCopy({
+        type: "tool_call",
+        toolCallId: "s3",
+        toolName: "run_command",
+        args: { args: ["pwd"] },
+        result: { result: "/home/user", exit_code: 0 },
+        status: "completed",
+        startedAt: 0,
+      } as any);
+      const o = outputSection(out);
+      assert(
+        o.includes("```\n/home/user\n```"),
+        "{result, exit_code} → stdout 内容直接出现"
+      );
+      assert(
+        !o.includes('"result": "/home/user"'),
+        "不再是裸 JSON（之前的 bug）"
+      );
+      assert(o.includes("exit: 0"), "exit code 仍然在");
+    }
+
+    // 4. 空 stdout + exit 0：仅显示 exit（用户能看出"跑成功但没输出"）
+    {
+      const out = formatToolCallForCopy({
+        type: "tool_call",
+        toolCallId: "s4",
+        toolName: "run_command",
+        args: { args: ["true"] },
+        result: { stdout: "", exit_code: 0 },
+        status: "completed",
+        startedAt: 0,
+      } as any);
+      const o = outputSection(out);
+      assert(o.includes("exit: 0"), "空 stdout 仍有 exit 提示");
+      assert(!o.includes("```json"), "Output 段没有 JSON 包裹");
+    }
+
+    // 5. 完全没 result（AGNO 异常 / 流中断）
+    {
+      const out = formatToolCallForCopy({
+        type: "tool_call",
+        toolCallId: "s5",
+        toolName: "run_command",
+        args: { args: ["sleep", "10"] },
+        status: "completed",
+        startedAt: 0,
+      } as any);
+      assert(out.includes("_(no output)_"), "无 result → 显式占位");
+    }
+
+    // 6. 还在跑
+    {
+      const out = formatToolCallForCopy({
+        type: "tool_call",
+        toolCallId: "s6",
+        toolName: "run_command",
+        args: { args: ["sleep", "10"] },
+        status: "calling",
+        startedAt: 0,
+      } as any);
+      assert(
+        out.includes("_(running, no output yet)_"),
+        "calling 状态显示 running 占位"
+      );
+    }
+
+    // 7. stderr 分段
+    {
+      const out = formatToolCallForCopy({
+        type: "tool_call",
+        toolCallId: "s7",
+        toolName: "run_command",
+        args: { args: ["false"] },
+        result: { stdout: "", stderr: "boom!", exit_code: 1 },
+        status: "completed",
+        startedAt: 0,
+      } as any);
+      const o = outputSection(out);
+      assert(o.includes("**stderr:**"), "stderr 分段标题");
+      assert(o.includes("```\nboom!\n```"), "stderr 文本");
+      assert(o.includes("exit: 1"), "非 0 exit code");
+    }
+
+    // 8. 任何情况下都包含 Output 段（用户要求"总能复制到输出"）
+    {
+      const out = formatToolCallForCopy({
+        type: "tool_call",
+        toolCallId: "s8",
+        toolName: "read_file",
+        args: { file_path: "/x" },
+        status: "completed",
+        startedAt: 0,
+      } as any);
+      assert(out.includes("**Output:**"), "非 shell 工具也始终有 Output 段");
+      assert(out.includes("_(no output)_"), "无 result → 占位");
+    }
+  }
+
+  console.log("\n=== formatToolCallForCopy: name / input / output 始终齐全 ===");
+  {
+    // 最小 case：有 args（保证 Input 段出现）+ name + 必然的 Output 段
+    const out = formatToolCallForCopy({
+      type: "tool_call",
+      toolCallId: "min",
+      toolName: "ping",
+      args: { url: "https://example.com" },
+      status: "completed",
+      startedAt: 0,
+    } as any);
+    assert(out.startsWith("### Ping"), "name 在第一行");
+    assert(out.includes("**Input:**"), "input 段");
+    assert(out.includes("**Output:**"), "output 段");
+    // 三段都有，顺序：name → input → output
+    const nameIdx = out.indexOf("### Ping");
+    const inputIdx = out.indexOf("**Input:**");
+    const outputIdx = out.indexOf("**Output:**");
+    assert(
+      nameIdx < inputIdx && inputIdx < outputIdx,
+      "name / input / output 顺序正确"
+    );
   }
 
   console.log(
