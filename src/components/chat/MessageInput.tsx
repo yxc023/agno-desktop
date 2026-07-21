@@ -49,18 +49,26 @@ export function MessageInput() {
       setShowUserIdSetup(true);
       return;
     }
-    if (!text.trim() || sending || isRunning) return;
+    const trimmed = text.trim();
+    if (!trimmed || sending || isRunning) return;
+    // 先抓快照再清空——这样 send 失败时还能把原文塞回去。
+    const snapshotText = trimmed;
+    const snapshotFiles = files;
+    setText("");
+    setFiles([]);
     setSending(true);
     try {
       await sendMessage({
-        text: text.trim(),
-        files: files.length > 0 ? files : undefined,
+        text: snapshotText,
+        files: snapshotFiles.length > 0 ? snapshotFiles : undefined,
       });
-      setText("");
-      setFiles([]);
     } catch (err) {
       console.error("sendMessage failed", err);
       alert(err instanceof Error ? err.message : String(err));
+      // 失败回滚：把输入内容还回去（覆盖用户在此期间键入的新内容，
+      // 但这种竞态极少且"恢复用户原文"对调试更友好）。
+      setText(snapshotText);
+      setFiles(snapshotFiles);
     } finally {
       setSending(false);
     }
