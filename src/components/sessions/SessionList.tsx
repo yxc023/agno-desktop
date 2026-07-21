@@ -12,6 +12,7 @@ import {
   RefreshCw,
   Copy,
   Check,
+  ChevronDown,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -65,7 +66,9 @@ function shortSessionId(id: string): string {
 export function SessionList() {
   const active = useActiveInstance();
   const loadSessions = useSessionsStore((s) => s.loadSessions);
+  const loadMoreSessions = useSessionsStore((s) => s.loadMoreSessions);
   const loading = useSessionsStore((s) => s.loading);
+  const loadingMore = useSessionsStore((s) => s.loadingMore);
   const searchQuery = useSessionsStore((s) => s.searchQuery);
   const setSearchQuery = useSessionsStore((s) => s.setSearchQuery);
   const currentSessionId = useSessionsStore((s) => s.currentSessionId);
@@ -77,6 +80,9 @@ export function SessionList() {
   const renameSession = useSessionsStore((s) => s.renameSession);
   const sessions = useSessionsStore((s) =>
     active ? (s.byInstance[active.id] ?? EMPTY_ARR) : EMPTY_ARR
+  );
+  const pagination = useSessionsStore((s) =>
+    active ? s.pagination[active.id] ?? null : null
   );
   const newSession = useChatStore((s) => s.newSession);
 
@@ -113,7 +119,9 @@ export function SessionList() {
             <span className="text-[12px] font-medium">会话</span>
             {sessions.length > 0 && (
               <span className="font-mono text-[10px] text-muted-foreground/70">
-                {sessions.length}
+                {pagination?.totalCount
+                  ? `${sessions.length}/${pagination.totalCount}`
+                  : sessions.length}
               </span>
             )}
           </div>
@@ -251,6 +259,49 @@ export function SessionList() {
               }}
             />
           ))}
+
+          {/* "加载更多" —— 仅在确实还有剩余时显示。
+              不在搜索时显示：搜索过滤的是已加载列表，再加载更多也不一定命中，
+              会给用户"为什么搜不到"的错觉。 */}
+          {!searchQuery.trim() &&
+            pagination?.hasMore &&
+            pagination.totalCount > 0 && (
+              <div className="pt-1.5">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={loadingMore}
+                  onClick={() => active && loadMoreSessions(active.id)}
+                  className="w-full h-7 text-[11px] text-muted-foreground hover:text-foreground"
+                >
+                  {loadingMore ? (
+                    <>
+                      <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
+                      加载中…
+                    </>
+                  ) : (
+                    <>
+                      <ChevronDown className="h-3 w-3 mr-1" />
+                      加载更多
+                      <span className="ml-1.5 font-mono text-[10px] text-muted-foreground/60">
+                        {sessions.length} / {pagination.totalCount}
+                      </span>
+                    </>
+                  )}
+                </Button>
+              </div>
+            )}
+
+          {/* 已加载全部时的轻量反馈：避免用户怀疑"是不是漏了"。仅在没在搜索时显示。 */}
+          {!searchQuery.trim() &&
+            pagination &&
+            !pagination.hasMore &&
+            pagination.totalCount > 0 &&
+            sessions.length > 0 && (
+              <div className="pt-1.5 pb-1 text-center font-mono text-[10px] text-muted-foreground/50">
+                — 全部 {pagination.totalCount} 条已加载 —
+              </div>
+            )}
         </div>
       </ScrollArea>
 

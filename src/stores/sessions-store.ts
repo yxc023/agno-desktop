@@ -5,12 +5,30 @@
  * - byInstance: { [instanceId]: AgSessionSummary[] }
  * - currentSessionId: 当前活跃 session
  *
+ * Pagination：
+ * - 默认拉 15 条（`/sessions?limit=15`），不是 100——`/sessions` 接口在某些
+ *   AGNO 版本上很慢，15 条足够 sidebar 起步展示，更多让用户主动点"加载更多"。
+ * - 每个实例独立的 pagination 状态：page / limit / totalCount / hasMore。
+ * - `loadMoreSessions(instanceId)` 拉下一页并 append 到现有 list（按 session_id
+ *   去重，避免 AGNO 在 page boundary 偶发的重复返回）。
+ *
  * session 的消息内容存在 chat-store 里
  */
 
 import { create } from "zustand";
 import type { AgSessionSummary } from "@/lib/agno-types";
 import { useInstancesStore } from "./instances-store";
+
+/** 每次拉取的 session 数。sidebar 起步展示 15 条足够；想看更多点"加载更多"。 */
+const DEFAULT_PAGE_LIMIT = 15;
+
+/** 一个实例的 pagination 状态 */
+interface PaginationState {
+  page: number;
+  limit: number;
+  totalCount: number;
+  hasMore: boolean;
+}
 
 function formatLoadError(rawMsg: string, baseUrl: string): string {
   const isCors =
@@ -35,12 +53,24 @@ function formatLoadError(rawMsg: string, baseUrl: string): string {
 
 interface SessionsState {
   byInstance: Record<string, AgSessionSummary[]>;
+  /**
+   * 每个实例的 pagination 状态。key = instanceId。
+   * 用 `Record` 而不是嵌套 map，方便 React 选择器按 instanceId O(1) 读。
+   */
+  pagination: Record<string, PaginationState>;
   currentSessionId: string | null;
   loading: boolean;
+  /**
+   * "加载更多"专属 loading flag —— 和 `loading` 区分开，避免初始 fetch 的
+   * skeleton 和翻页时的 inline spinner 互相干扰。
+   */
+  loadingMore: boolean;
   searchQuery: string;
   loadError: Record<string, string | null>;
 
   loadSessions: (instanceId: string, force?: boolean) => Promise<AgSessionSummary[]>;
+  /** 拉下一页并 append。已无更多页时 no-op。 */
+  loadMoreSessions: (instanceId: string) => Promise<void>;
   setCurrentSession: (id: string | null) => void;
   upsertSession: (instanceId: string, session: AgSessionSummary) => void;
   removeSession: (instanceId: string, sessionId: string) => Promise<void>;
@@ -55,8 +85,10 @@ interface SessionsState {
 
 export const useSessionsStore = create<SessionsState>((set, get) => ({
   byInstance: {},
+  pagination: {},
   currentSessionId: null,
   loading: false,
+  loadingMore: false,
   searchQuery: "",
   loadError: {},
 
@@ -68,10 +100,30 @@ export const useSessionsStore = create<SessionsState>((set, get) => ({
     if (!client) return [];
     set({ loading: true });
     try {
-      const res = await client.listSessions({ limit: 100 });
+      const res = await client.listSessions({
+        limit: DEFAULT_PAGE_LIMIT,
+        page: 1,
+      });
       const list = res.data ?? [];
+      const meta = res.meta;
+      const limit = meta?.limit ?? DEFAULT_PAGE_LIMIT;
+      const totalCount = meta?.total_count ?? list.length;
+      // total_pages 不一定有：自己从 total_count 算。优先用 API 给的（可能更准，
+      // 比如 AGNO 在边界值上用 ceil / floor 偶尔不一致）。
+      const totalPages =
+        meta?.total_pages ??
+        (totalCount > 0 ? Math.ceil(totalCount / limit) : 1);
       set((s) => ({
         byInstance: { ...s.byInstance, [instanceId]: list },
+        pagination: {
+          ...s.pagination,
+          [instanceId]: {
+            page: 1,
+            limit,
+            totalCount,
+            hasMore: 1 < totalPages,
+          },
+        },
         loadError: { ...s.loadError, [instanceId]: null },
         loading: false,
       }));
@@ -88,6 +140,56 @@ export const useSessionsStore = create<SessionsState>((set, get) => ({
         loading: false,
       }));
       return [];
+    }
+  },
+
+  loadMoreSessions: async (instanceId) => {
+    const pg = get().pagination[instanceId];
+    // 已无更多 / 没有 pagination 状态 / 正在翻页 → no-op
+    if (!pg || !pg.hasMore || get().loadingMore || get().loading) return;
+    const client = useInstancesStore.getState().getClient(instanceId);
+    if (!client) return;
+    const nextPage = pg.page + 1;
+    set({ loadingMore: true });
+    try {
+      const res = await client.listSessions({
+        limit: pg.limit,
+        page: nextPage,
+      });
+      const more = res.data ?? [];
+      const meta = res.meta;
+      const totalCount = meta?.total_count ?? pg.totalCount;
+      const totalPages =
+        meta?.total_pages ??
+        (totalCount > 0 ? Math.ceil(totalCount / pg.limit) : nextPage);
+      set((s) => {
+        const existing = s.byInstance[instanceId] ?? [];
+        // 去重：AGNO 在 page 边界理论上不会重复，但万一有 race / 重复行
+        // 不会让 sidebar 出现两条相同的 session。
+        const seen = new Set(existing.map((x) => x.session_id));
+        const additions = more.filter((x) => !seen.has(x.session_id));
+        return {
+          byInstance: {
+            ...s.byInstance,
+            [instanceId]: [...existing, ...additions],
+          },
+          pagination: {
+            ...s.pagination,
+            [instanceId]: {
+              page: nextPage,
+              limit: pg.limit,
+              totalCount,
+              hasMore: nextPage < totalPages,
+            },
+          },
+          loadingMore: false,
+        };
+      });
+    } catch (err) {
+      console.error("loadMoreSessions failed", err);
+      // 失败就停在这一页 —— hasMore 不动，让用户重试或者无视。
+      // 不弹错误 toast，避免一个慢接口打断用户整个工作流。
+      set({ loadingMore: false });
     }
   },
 
@@ -121,8 +223,20 @@ export const useSessionsStore = create<SessionsState>((set, get) => ({
       const list = (s.byInstance[instanceId] ?? []).filter(
         (x) => x.session_id !== sessionId
       );
+      // totalCount 同步减 1，避免"加载更多"按钮还显示有 N 条未读
+      const pg = s.pagination[instanceId];
+      const nextPagination = pg
+        ? {
+            ...s.pagination,
+            [instanceId]: {
+              ...pg,
+              totalCount: Math.max(0, pg.totalCount - 1),
+            },
+          }
+        : s.pagination;
       return {
         byInstance: { ...s.byInstance, [instanceId]: list },
+        pagination: nextPagination,
         currentSessionId:
           s.currentSessionId === sessionId ? null : s.currentSessionId,
       };
