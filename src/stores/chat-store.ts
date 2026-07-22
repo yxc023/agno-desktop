@@ -347,6 +347,46 @@ interface ChatState {
 }
 
 /* ------------------------------------------------------------------ */
+/* Tool result index — runs[].tools[] → Map<tool_call_id, result_str> */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 构建 `tool_call_id → tool.result` 的索引。
+ *
+ * 数据源：`runs[].tools[]`（不是 `chat_history`）。
+ *
+ * 为什么需要这个：
+ * - AGNO 把 tool_call 的 `tool_calls[]` 字段持久化进 chat_history，**但不存
+ *   `tool_calls[].result`** 字段（实测：从 `/sessions/{id}` 看到的 chat_history
+ *   里所有 tool_calls[].result 都是 undefined）。
+ * - 但同一 session 的 `/sessions/{id}/runs` 端点返回 `run.tools[]`，里面
+ *   有完整的 `tool_call_id` 和 `result`（JSON 字符串形式的工具返回）。
+ * - loadHistory 已经拉了 runs 数据，但只用 events[] / messages[] 做 sub-agent
+ *   重建，没有把 `run.tools[].result` 接到对应的 tool_call part 上。
+ *   → 历史 session 的工具结果会显示 "(no output)"。
+ *
+ * 这个索引让两个 loader（runToChatMessages 和 effectiveHistory 主循环）都能
+ * 用 tool_call_id 反查到真正的 result，补到 tool_call part 的 `result` 字段。
+ */
+export function buildToolResultIndex(runs: AgRunResponse[]): Map<string, string> {
+  const out = new Map<string, string>();
+  if (!runs) return out;
+  for (const run of runs) {
+    const tools = (run as any).tools;
+    if (!Array.isArray(tools)) continue;
+    for (const t of tools) {
+      const id = t?.tool_call_id;
+      const result = t?.result;
+      // 只要非空 result（string / object 都可以）；跳过 null/undefined
+      if (id && result != null) {
+        out.set(id, typeof result === "string" ? result : JSON.stringify(result));
+      }
+    }
+  }
+  return out;
+}
+
+/* ------------------------------------------------------------------ */
 /* Reconstruct sub-messages from a single AGNO run                    */
 /* ------------------------------------------------------------------ */
 
@@ -358,9 +398,10 @@ interface ChatState {
  */
 function runToChatMessages(
   run: AgRunResponse,
-  opts: { includeUser?: boolean } = {}
+  opts: { includeUser?: boolean; toolResultIndex?: Map<string, string> } = {}
 ): ChatMessage[] {
   const includeUser = opts.includeUser ?? false;
+  const toolResultIndex = opts.toolResultIndex;
   const out: ChatMessage[] = [];
   let currentAssistant: ChatMessage | null = null;
 
@@ -448,7 +489,13 @@ function runToChatMessages(
             ? safeParse(t.arguments)
             : t.arguments;
       }
-      const result = t.result ?? null;
+      // chat_history[messages][].tool_calls[].result 通常是 undefined（AGNO 不
+      // 持久化），用 runs[].tools[] 的索引补。last-one-wins：runs 按出现顺序叠，
+      // 多 run 同 tool_call_id 的情况罕见，真出现就保留最后一个。
+      const resultFromHistory = t.result ?? null;
+      const resultFromRuns =
+        toolResultIndex != null && id ? toolResultIndex.get(id) ?? null : null;
+      const result = resultFromHistory ?? resultFromRuns;
       const metrics = t.metrics;
       parts.push({
         type: "tool_call",
@@ -734,6 +781,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
         if (r.run_id) runById.set(r.run_id, r);
       }
 
+      // 索引：tool_call_id -> tool result（来自 runs[].tools[]）
+      //
+      // 为什么需要：AGNO 把 tool_calls[] 持久化进 chat_history，但**不存 result
+      // 字段**；导致历史 session 加载后所有 tool_call 的 `result` 是 undefined，
+      // UI 永远显示 "(no output)"。同一个 session 的 `/sessions/{id}/runs` 端点
+      // 返回的 `run.tools[]` 里有完整的 result（JSON 字符串），这里建索引、loader
+      // 里用 tool_call_id 补回去。
+      const toolResultIndex = buildToolResultIndex(runs);
+
       // 跟踪每个 message_id 对应的 run_id（如果有）
       const runIdByMessageId = new Map<string, string>();
       for (const r of runs) {
@@ -806,7 +862,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 ? safeParse(t.arguments)
                 : t.arguments;
           }
-          const result = t.result ?? null;
+          // chat_history[messages][].tool_calls[].result 持久化时丢，用
+          // runs[].tools[] 索引补（见 toolResultIndex 说明）。last-write-wins
+          // 让代码简单：如果 history 有，用 history；否则用 runs。
+          const resultFromHistory = t.result ?? null;
+          const resultFromRuns = toolResultIndex.get(id) ?? null;
+          const result = resultFromHistory ?? resultFromRuns;
           const metrics = t.metrics;
           parts.push({
             type: "tool_call",
