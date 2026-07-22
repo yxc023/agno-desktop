@@ -94,14 +94,9 @@ const markdownComponents: Components & {
   },
   think({ children }) {
     return (
-      <details className="my-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs">
-        <summary className="cursor-pointer text-muted-foreground select-none font-medium">
-          推理过程
-        </summary>
-        <div className="mt-2 whitespace-pre-wrap text-foreground/80 leading-relaxed">
-          {children}
-        </div>
-      </details>
+      <div className="my-2 whitespace-pre-wrap rounded bg-muted/40 px-3 py-2 text-[11.5px] leading-relaxed text-muted-foreground">
+        {children}
+      </div>
     );
   },
 };
