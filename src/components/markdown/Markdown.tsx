@@ -1,5 +1,5 @@
 import { Fragment, memo, type ReactNode } from "react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import rehypeRaw from "rehype-raw";
@@ -14,6 +14,97 @@ interface Props {
   /** 当文本正在流式追加时，给最后字符加 cursor 动画 */
   streaming?: boolean;
 }
+
+// React 19 拒绝渲染不带连字符的未知 HTML tag，console 抛：
+//   "The tag <think> is unrecognized in this browser"
+// 某些 reasoning model（DeepSeek R1 / Qwen QwQ / 自行拼 XML 的 agent）
+// 在 messages[].content 里直接吐 <think>...</think> 而不是走 AGNO 的
+// reasoning_content event——rehype-raw 把它当 HTML 元素透传给 React 就炸。
+// 这里 override 成 <details>：可折叠、不污染主对话流、不需要额外依赖。
+// Components 类型只允许已知 HTML tag，所以 think 用 `Components & { think?: ... }`
+// 拓展一下，保留其他 overrides 的类型检查。
+const markdownComponents: Components & {
+  think?: (props: { children?: ReactNode }) => ReactNode;
+} = {
+  pre({ children }) {
+    // rehype-highlight 已经在 pre 里包裹了 code，
+    // 直接把 children 透传给我们的 code 渲染管线，避免多套一层无意义 fragment
+    return <Fragment>{children}</Fragment>;
+  },
+  code({ className: cls, children, node: _node, ...props }) {
+    // 关键修复（修复前是 `String(children)`，会把 rehype-highlight 产生的
+    // `<span>` 元素数组序列化成 "[object Object],[object Object],..."，
+    // 导致代码块里出现一串 "[object Object]" 字样）。
+    //
+    // 检测 block vs inline：用 className 里有没有 `language-*` 区分。
+    //   - 旧 `isInline = !props.node?.position` 永远为 false（两种 code 都
+    //     有 position），结果 inline 也走 CodeBlock 路径——只是因为 inline
+    //     的 children 是 string，`String("code")` 偶然没坏。
+    //   - rehype-highlight + `detect: true` 总会给 fenced block 加上
+    //     `language-xxx` 类（要么显式、要么自动识别），inline 永远没有。
+    //     所以 className 是最可靠的区分依据。
+    const langMatch = /language-(\w+)/.exec(cls || "");
+    const language = langMatch?.[1];
+
+    if (!language) {
+      // inline code：直接渲染子节点（highlight.js 不处理 inline）
+      return (
+        <code
+          className="px-1.5 py-0.5 rounded bg-muted text-foreground font-mono text-[0.85em]"
+          {...props}
+        >
+          {children}
+        </code>
+      );
+    }
+
+    // block code：把 children（已经是 hljs token span 树）原样传给 CodeBlock,
+    // 保留高亮。CodeBlock 自己会用 extractText(children) 拿到纯文本做"复制"。
+    return (
+      <CodeBlock language={language}>{children as ReactNode}</CodeBlock>
+    );
+  },
+  a({ href, children }) {
+    return (
+      <a
+        href={href}
+        target="_blank"
+        rel="noreferrer"
+        onClick={(e) => {
+          // Tauri Webview 默认拦截 target=_blank，要么在 webview 内
+          // 开新 tab 要么静默失败。preventDefault 后调 shell.open
+          // 走系统默认浏览器，体验与"普通浏览器"一致。
+          // 保留 href + target 让 dev 工具 / 浏览器环境（裸 vite）
+          // 仍能 hover/copy/中键新窗口打开。
+          e.preventDefault();
+          e.stopPropagation();
+          void openExternalUrl(href);
+        }}
+      >
+        {children}
+      </a>
+    );
+  },
+  table({ children }) {
+    return (
+      <div className="overflow-x-auto my-3">
+        <table className="w-full text-sm">{children}</table>
+      </div>
+    );
+  },
+  think({ children }) {
+    return (
+      <details className="my-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs">
+        <summary className="cursor-pointer text-muted-foreground select-none font-medium">
+          推理过程
+        </summary>
+        <div className="mt-2 whitespace-pre-wrap text-foreground/80 leading-relaxed">
+          {children}
+        </div>
+      </details>
+    );
+  },
+};
 
 /**
  * Markdown — 把 markdown 字符串渲染成 HTML。
@@ -55,74 +146,7 @@ export const Markdown = memo(function Markdown({
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkBreaks]}
         rehypePlugins={[rehypeRaw, [rehypeHighlight, { detect: true }]]}
-        components={{
-          pre({ children }) {
-            // rehype-highlight 已经在 pre 里包裹了 code，
-            // 直接把 children 透传给我们的 code 渲染管线，避免多套一层无意义 fragment
-            return <Fragment>{children}</Fragment>;
-          },
-          code({ className: cls, children, node: _node, ...props }) {
-            // 关键修复（修复前是 `String(children)`，会把 rehype-highlight 产生的
-            // `<span>` 元素数组序列化成 "[object Object],[object Object],..."，
-            // 导致代码块里出现一串 "[object Object]" 字样）。
-            //
-            // 检测 block vs inline：用 className 里有没有 `language-*` 区分。
-            //   - 旧 `isInline = !props.node?.position` 永远为 false（两种 code 都
-            //     有 position），结果 inline 也走 CodeBlock 路径——只是因为 inline
-            //     的 children 是 string，`String("code")` 偶然没坏。
-            //   - rehype-highlight + `detect: true` 总会给 fenced block 加上
-            //     `language-xxx` 类（要么显式、要么自动识别），inline 永远没有。
-            //     所以 className 是最可靠的区分依据。
-            const langMatch = /language-(\w+)/.exec(cls || "");
-            const language = langMatch?.[1];
-
-            if (!language) {
-              // inline code：直接渲染子节点（highlight.js 不处理 inline）
-              return (
-                <code
-                  className="px-1.5 py-0.5 rounded bg-muted text-foreground font-mono text-[0.85em]"
-                  {...props}
-                >
-                  {children}
-                </code>
-              );
-            }
-
-            // block code：把 children（已经是 hljs token span 树）原样传给 CodeBlock,
-            // 保留高亮。CodeBlock 自己会用 extractText(children) 拿到纯文本做"复制"。
-            return (
-              <CodeBlock language={language}>{children as ReactNode}</CodeBlock>
-            );
-          },
-          a({ href, children }) {
-            return (
-              <a
-                href={href}
-                target="_blank"
-                rel="noreferrer"
-                onClick={(e) => {
-                  // Tauri Webview 默认拦截 target=_blank，要么在 webview 内
-                  // 开新 tab 要么静默失败。preventDefault 后调 shell.open
-                  // 走系统默认浏览器，体验与"普通浏览器"一致。
-                  // 保留 href + target 让 dev 工具 / 浏览器环境（裸 vite）
-                  // 仍能 hover/copy/中键新窗口打开。
-                  e.preventDefault();
-                  e.stopPropagation();
-                  void openExternalUrl(href);
-                }}
-              >
-                {children}
-              </a>
-            );
-          },
-          table({ children }) {
-            return (
-              <div className="overflow-x-auto my-3">
-                <table className="w-full text-sm">{children}</table>
-              </div>
-            );
-          },
-        }}
+        components={markdownComponents}
       >
         {children}
       </ReactMarkdown>
