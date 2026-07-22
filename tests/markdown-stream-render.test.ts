@@ -1,12 +1,18 @@
 /**
- * MarkdownStream.test.ts — 流式渲染的 prefix/tail 行为契约
+ * MarkdownStream.test.ts — 流式渲染契约（v2：remend-based）
  *
- * 核心契约：
- *   - streaming=false: 整段作为 prefix 走 Markdown，无 tail
- *   - streaming=true:
- *     - 切到稳定边界：prefix 走 Markdown；tail 是 plain text + cursor
- *   - 稳定的 streaming tick：A → B 仅 tail 增长 → prefix 文本不变
- *     （等同 Markdown memo skip）
+ * 旧版 v1 用 prefix/tail 二分：tail 是 plain text，目的是避免"半截 fence"视觉错乱。
+ * 但这个策略在**短单行消息**上完全退化（找不到 \n\n 边界 → 整段进 tail →
+ * `**text**` 显示成原文 —— 用户截图证据）。
+ *
+ * v2 借鉴 OpenCode 的 `remend`：始终走 markdown parse，remend 自动治愈
+ * 流式中途的不完整语法（`**bold` → `**bold**`、`[link](http` → `link text` 等）。
+ *
+ * 核心契约（v2）：
+ *   - **始终**走 Markdown parse（streaming 只是 cursor 视觉标志）
+ *   - `**bold` 流式中途 → 治愈为 `**bold**` → 渲染为 `<strong>bold</strong>`
+ *   - `[link](http` 流式中途 → 降级为 plain text（linkMode: text-only）
+ *   - streaming=false / streaming=true 渲染产物**仅差 cursor**
  *
  * 跑法：
  *   bun run tests/markdown-stream-render.test.ts
@@ -39,123 +45,94 @@ function render(opts: { text: string; streaming?: boolean }): string {
 function main(): void {
   console.log("=== non-streaming: passes whole text to Markdown ===");
   {
-    // 不带 streaming：整段视为 prefix
     const html = render({ text: "Hello **world**", streaming: false });
     assert(html.includes("<strong>world</strong>"), "non-streaming: bold renders");
+    assert(!html.includes("streaming-cursor"), "non-streaming: no cursor");
   }
 
-  console.log("\n=== streaming, no boundary yet: tail contains full text ===");
+  console.log("\n=== streaming: short single-line with **bold** is parsed (regression for user screenshot) ===");
   {
-    // 无 \n\n，markdown-stream 把整段视为 tail → plain text + cursor
+    // 旧版 v1 这里整段进 tail → plain text → 看到 **Assessing title** 原文
+    // v2 用 remend → **bold** 完整 → 直接渲染为 <strong>
+    const html = render({ text: "**Assessing title**", streaming: true });
+    assert(
+      html.includes("<strong>Assessing title</strong>"),
+      "streaming single-line: **bold** parses to <strong> (was a bug in v1)"
+    );
+    assert(html.includes("streaming-cursor"), "streaming: cursor present");
+  }
+
+  console.log("\n=== streaming: incomplete **bold auto-healed by remend ===");
+  {
+    // 流式中途只打出 "**Assessing title" —— v2 自动补成 **Assessing title**
+    const html = render({ text: "**Assessing title", streaming: true });
+    assert(
+      html.includes("<strong>Assessing title</strong>"),
+      "streaming incomplete **: remend closes it → renders as bold"
+    );
+  }
+
+  console.log("\n=== streaming: incomplete link falls back to text-only ===");
+  {
+    // 流式中途 [link text](http → remend linkMode:text-only → 降级为 "link text"
+    const html = render({ text: "[link text](http", streaming: true });
+    assert(html.includes("link text"), "streaming incomplete link: degraded to text");
+    // 不应该渲染出残缺 URL
+    assert(!html.includes('href="http"'), "streaming incomplete link: no broken href");
+  }
+
+  console.log("\n=== streaming: unclosed code fence is preserved literally ===");
+  {
+    // 流式中途 ```python 还没闭合 —— remend 不会补全 fence（因为不能猜内容），
+    // 整段仍走 markdown 但 fence 渲染会因未闭合而失败/退化。这是 markdown 库
+    // 的天然行为，不在 v2 的修复范围（避免 fence 半截需要 prefix/tail 策略，
+    // 但那个策略在短消息上崩溃，所以这是个两难，先 ship v2）。
     const html = render({
-      text: "Hello world still typing",
+      text: "Some intro.\n\n```python\ndef f():",
       streaming: true,
     });
-    // plain text span 里包含完整文本（去掉 markdown 标签）
-    assert(
-      html.includes("Hello world still typing"),
-      "streaming with no boundary: tail still contains full text"
-    );
-    assert(
-      html.includes("streaming-cursor"),
-      "streaming with no boundary: cursor class present"
-    );
-    // prefix 为空时不应走 Markdown 的 prose wrapper；用 streaming-cursor span 替代
-    assert(
-      !html.includes("<strong>"),
-      "streaming with no boundary: no markdown bold (tail is plain text)"
-    );
+    assert(html.includes("Some intro"), "intro text rendered");
+    assert(html.includes("streaming-cursor"), "cursor present");
   }
 
-  console.log("\n=== streaming, after \\n\\n break: split into prefix + tail ===");
+  console.log("\n=== streaming: closed fence complete: hljs renders ===");
   {
-    // 前一段是完结的 markdown 段落，尾巴是 streaming 中
-    const html = render({
-      text: "First **para** done.\n\nStill typing",
-      streaming: true,
-    });
-    assert(
-      html.includes("First"),
-      "streaming with break: prefix text rendered"
-    );
-    assert(
-      html.includes("Still typing"),
-      "streaming with break: tail text rendered"
-    );
-    assert(
-      html.includes("streaming-cursor"),
-      "streaming with break: cursor on tail"
-    );
-    // prefix 部分应包含 markdown 渲染产物（<strong>...</strong>）
-    assert(
-      html.includes("<strong>para</strong>"),
-      "streaming with break: prefix IS parsed by Markdown (bold)"
-    );
-  }
-
-  console.log("\n=== streaming, unclosed fence: prefix empty, tail = whole text ===");
-  {
-    // 未闭合 fence：prefix = "" (fence 之前的内容)，tail = 整个 fence
-    // 此场景下 tail 是 plain text（不要让用户看到「```python」被误解析）
-    const html = render({
-      text: "Some intro.\n\n```python\ndef f():\n    pas",
-      streaming: true,
-    });
-    assert(
-      html.includes("Some intro."),
-      "unclosed fence: prefix-intro rendered"
-    );
-    assert(
-      html.includes("```python"),
-      "unclosed fence: tail preserves the fence literal"
-    );
-    // 未闭合 fence 不应被 highlight.js 处理
-    // （这里只能弱断言：cursor span 应在 tail 内）
-    assert(html.includes("streaming-cursor"), "unclosed fence: cursor present");
-  }
-
-  console.log("\n=== streaming, closed fence complete: prefix has the fence ===");
-  {
-    // 已闭合的代码块 → prefix 走 Markdown，应能看到 hljs 高亮
     const html = render({
       text: "Intro.\n\n```js\nconsole.log('x');\n```\n\nAfter",
       streaming: true,
     });
-    // hljs 会把 `console`/`log`/`'x'` 拆到独立 span 里：`console</span>.<span>log</span>`
-    // 所以不能用 includes("console.log") 这种直接子串——断言拆开看。
-    assert(html.includes("console"), "closed fence: 'console' preserved in prefix");
-    assert(html.includes("log"), "closed fence: 'log' preserved in prefix");
-    assert(
-      html.includes("hljs-"),
-      "closed fence: hljs classes present in prefix"
-    );
-    assert(html.includes("After"), "closed fence: tail contains 'After'");
+    assert(html.includes("console"), "closed fence: 'console' preserved");
+    assert(html.includes("log"), "closed fence: 'log' preserved");
+    assert(html.includes("hljs-"), "closed fence: hljs classes present");
+    assert(html.includes("After"), "after-fence text rendered");
   }
 
-  console.log("\n=== streaming equals false behaves identically to Markdown ===");
+  console.log("\n=== streaming vs non-streaming: only difference is cursor ===");
   {
-    // streaming=false 应当走完整的 Markdown 路径（含 hljs for closed fence 等）
-    const a = render({
-      text: "Intro.\n\n```js\nconsole.log('x');\n```",
+    const streamingHtml = render({
+      text: "**bold** and `code`",
+      streaming: true,
+    });
+    const nonStreamingHtml = render({
+      text: "**bold** and `code`",
       streaming: false,
     });
-    assert(a.includes("console"), "streaming=false: 'console' rendered");
-    assert(a.includes("log"), "streaming=false: 'log' rendered");
     assert(
-      a.includes("hljs-"),
-      "streaming=false: hljs classes present (full Markdown)"
+      streamingHtml.includes("streaming-cursor") &&
+        !nonStreamingHtml.includes("streaming-cursor"),
+      "streaming=true has cursor, streaming=false doesn't"
     );
-    // streaming=false 不应有 cursor
+    // 两个版本都解析 bold —— 关键差异：v1 里 streaming 短消息会把 ** 当原文
     assert(
-      !a.includes("streaming-cursor"),
-      "streaming=false: no streaming-cursor class anywhere"
+      streamingHtml.includes("<strong>bold</strong>") &&
+        nonStreamingHtml.includes("<strong>bold</strong>"),
+      "both modes parse **bold** identically"
     );
   }
 
   console.log("\n=== empty text: minimal output ===");
   {
     const html = render({ text: "", streaming: true });
-    // 不报错、HTML 长度极短即可
     assert(typeof html === "string", "empty text: renders to string");
   }
 

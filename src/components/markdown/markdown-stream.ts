@@ -1,52 +1,18 @@
 /**
- * markdown-stream.ts — 流式 markdown 投影
+ * markdown-stream.ts — 旧版 prefix/tail 切分逻辑（**已废弃**，保留导出仅用于
+ * 现有 unit test 与未来可能需要的 block-level cache 工作）。
  *
- * 借鉴 OpenCode (anomalyco/opencode, packages/session-ui/src/components/markdown-stream.ts)
- * 的核心思路：把流式 markdown 文本切分为「稳定前缀 + 实时尾巴」。
+ * ## 历史
+ * v1 用 prefix/tail 二分：tail 是 plain text，目的是避免"半截 fence"视觉错乱。
+ * 但这个策略在**短单行消息**上完全退化（找不到 \n\n 边界 → 整段进 tail →
+ * `**text**` 显示成原文，用户截图证据）。
  *
- * ## 问题
- * 流式渲染时，每个 chunk 都把整段文本塞给 `react-markdown`，导致：
- *   - 整段 markdown 被重新 tokenize + 重 build parse tree
- *   - rehype-highlight 的 `detect: true` 会对**未闭合**的代码块尝试识别语言
- *     并高亮，这是 streaming 期间的纯浪费
- *   - 任何没变的前面段落也被重新解析
- *   - 在主线程上同步执行，每次 chunk 30-60ms 的 SSE tick → 16-30 次 parse/sec
+ * v2（当前生产路径）改用 `remend`：始终走 markdown parse + 治愈不完整语法。
+ * 见 `MarkdownStream.tsx`。本文件保留是单元测试覆盖 + 后续 follow-up 优化
+ * （block-level cache、token-level memo）时可能复用 helper 函数。
  *
- * ## 解法
- * 把 streaming 文本切到「最后一段稳定边界」：
- *   - **prefix** — 到「最后一个**已闭合**的段落/code fence」为止（含闭合符）
- *   - **tail**   — prefix 之后的字符，**当作纯文本**渲染（带 streaming cursor）
- *
- * 典型 streaming 过程：
- *   1. tick A: text = "Hello world" → prefix = "", tail = "Hello world"（无边界 → tail 是整段）
- *   2. tick B: text = "Hello world.\n\nThis is" → prefix = "Hello world.\n\n", tail = "This is"
- *   3. tick C: text = "Hello world.\n\nThis is a test" → prefix 不变, tail = "This is a test"
- *
- *   → tick B 触发了一次 markdown parse（新增了一个段落）
- *   → tick C 复用之前的 parsed prefix，只更新了纯文本的 tail
- *
- * 当 stream 结束（status !== "streaming"）时，应把整段文本当作「完整 markdown」一次性渲染，
- * 此时切分逻辑让位给纯 text 传入 `Markdown` 组件即可。
- *
- * ## 简化说明
- * OpenCode 的实现里还有：
- *   - code fence 的「开放/闭合」检测 + 单 token 内 `heal()`（remend 补全 markdown）
- *   - 多级 `project()` 复用 `previous.blocks`
- *   - `morpdom` 做 DOM 局部 patch
- *   - Shiki 走 Web Worker
- *
- * 我们这里用最小可用子集：单层 prefix/tail 二分 + 一个轻量 markdown cache（key = 完整文本），
- * 由 React.memo + 文本对比实现"未变就不重 parse"。
- *
- * ## 风险控制
- * - **unclosed code fence**：边界不切割未闭合的 ``` 块 —— 切错位置会让用户看到 markdown
- *   突变成代码块。该情形下 prefix 切到 fence 起点（含起始 ```），tail 从 fence 内容开始。
- *   这样 fence 在 prefix 里渲染（rehype-highlight 会拿到闭合的 fence）；尾巴渲染为 plain text。
- *   ⚠️ 这是**已知简化**：实际上未闭合 fence 在 streaming 阶段整段都不该被当成 code highlight，
- *   应该跟 tail 一起走 plain text 路径。但更复杂的策略留给后续迭代——目前的简化已能消除
- *   主要的 jank 来源。
- * - **Markdown link ref (`[foo]: url`)**：OpenCode 检测到 ref 定义就切到「整段 live」，
- *   这是为了避免 link 引用与 link 文本错配。我们这里走完整 fallback：检测到时整段视为 live。
+ * 借鉴对象：OpenCode (anomalyco/opencode,
+ * packages/session-ui/src/components/markdown-stream.ts) 的 block projection。
  */
 
 /**
