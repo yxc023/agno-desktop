@@ -16,41 +16,32 @@ interface Props {
 }
 
 // React 19 拒绝渲染不带连字符的未知 HTML tag，console 抛：
-//   "The tag <think> is unrecognized in this browser"
+//   "The tag  WoW is unrecognized in this browser"
 // 某些 reasoning model（DeepSeek R1 / Qwen QwQ / 自行拼 XML 的 agent）
-// 在 messages[].content 里直接吐 <think>...</think> 而不是走 AGNO 的
+// 在 messages[].content 里直接吐 thinkable.../thinkable 而不是走 AGNO 的
 // reasoning_content event——rehype-raw 把它当 HTML 元素透传给 React 就炸。
-// 这里 override 成 <details>：可折叠、不污染主对话流、不需要额外依赖。
-// Components 类型只允许已知 HTML tag，所以 think 用 `Components & { think?: ... }`
-// 拓展一下，保留其他 overrides 的类型检查。
+//
+// 关键陷阱：让 react-markdown 处理 think 的 components override 会产生
+// `<p><div>` 非法嵌套（think 是 inline HTML → react-markdown 包成 `<p>`，
+// 但 override 返回 `<div>` 是 block）。所以下面用「文本 pre-split」策略：
+// 在 Markdown 组件入口用 regex 把 think 段先切出来，单独渲染成块，
+// 留下的非 think 部分才进 react-markdown 的 AST。
+//
+// Components 类型只允许已知 HTML tag，所以 think 的入口走 `Markdown` 外层
+// 的 pre-split，不进 components map（这里保留 think override 是兜底——如果
+// 数据因为被 react-markdown 提前 strip 或转义，pre-split 没抓到，override
+// 也不让 React 抛 unknown-tag 错误）。
 const markdownComponents: Components & {
   think?: (props: { children?: ReactNode }) => ReactNode;
 } = {
   pre({ children }) {
-    // rehype-highlight 已经在 pre 里包裹了 code，
-    // 直接把 children 透传给我们的 code 渲染管线，避免多套一层无意义 fragment
     return <Fragment>{children}</Fragment>;
   },
   code({ className: cls, children, node: _node, ...props }) {
-    // 关键修复（修复前是 `String(children)`，会把 rehype-highlight 产生的
-    // `<span>` 元素数组序列化成 "[object Object],[object Object],..."，
-    // 导致代码块里出现一串 "[object Object]" 字样）。
-    //
-    // 检测 block vs inline：用 className 里有没有 `language-*` 区分。
-    //   - 旧 `isInline = !props.node?.position` 永远为 false（两种 code 都
-    //     有 position），结果 inline 也走 CodeBlock 路径——只是因为 inline
-    //     的 children 是 string，`String("code")` 偶然没坏。
-    //   - rehype-highlight + `detect: true` 总会给 fenced block 加上
-    //     `language-xxx` 类（要么显式、要么自动识别），inline 永远没有。
-    //     所以 className 是最可靠的区分依据。
     const langMatch = /language-(\w+)/.exec(cls || "");
     const language = langMatch?.[1];
 
     if (!language) {
-      // inline code：直接渲染子节点（highlight.js 不处理 inline）。
-      // 字号用 text-[0.92em]：prose-sm code 默认 0.875em，我们选 0.92em 让
-      // inline code 跟正文差距 ~1px（之前 0.85em 差 2px+，密度低的行里整段
-      // 像被 inline code "拉小"了——用户截图反馈"字看着特别小"）。
       return (
         <code
           className="px-1.5 py-0.5 rounded bg-muted text-foreground font-mono text-[0.92em]"
@@ -60,9 +51,6 @@ const markdownComponents: Components & {
         </code>
       );
     }
-
-    // block code：把 children（已经是 hljs token span 树）原样传给 CodeBlock,
-    // 保留高亮。CodeBlock 自己会用 extractText(children) 拿到纯文本做"复制"。
     return (
       <CodeBlock language={language}>{children as ReactNode}</CodeBlock>
     );
@@ -74,11 +62,6 @@ const markdownComponents: Components & {
         target="_blank"
         rel="noreferrer"
         onClick={(e) => {
-          // Tauri Webview 默认拦截 target=_blank，要么在 webview 内
-          // 开新 tab 要么静默失败。preventDefault 后调 shell.open
-          // 走系统默认浏览器，体验与"普通浏览器"一致。
-          // 保留 href + target 让 dev 工具 / 浏览器环境（裸 vite）
-          // 仍能 hover/copy/中键新窗口打开。
           e.preventDefault();
           e.stopPropagation();
           void openExternalUrl(href);
@@ -95,6 +78,8 @@ const markdownComponents: Components & {
       </div>
     );
   },
+  // 兜底：pre-split 没抓到 think 时，至少不要让 React 19 抛 unknown tag。
+  // 实际场景下不会触发；保留只是为了防御性地兼容未来数据形态变化。
   think({ children }) {
     return (
       <div className="my-2 whitespace-pre-wrap rounded bg-muted/40 px-3 py-2 text-[11.5px] leading-relaxed text-muted-foreground">
@@ -105,57 +90,132 @@ const markdownComponents: Components & {
 };
 
 /**
+ * 把 markdown 文本里的 思考块切出来，跟 ReasoningBlock 同款视觉。
+ *
+ * ## 为什么需要这个切分
+ * AGNO 把某些 reasoning model 的输出（DeepSeek R1 / Qwen QwQ / 自行拼 XML
+ * 的 agent）原样落到 chat_history 里——``...``. 这种 inline HTML
+ * 进 react-markdown 后会被包成 `<p>`；我们想要的最终视觉是一个浅灰圆角块
+ * （跟 ReasoningBlock 一致），但 `<div>` 不能合法地嵌在 `<p>` 里。
+ *
+ * 浏览器看到 `<p><div>` 时会自动闭合 `<p>`，导致布局错乱、用户反馈
+ * "格式显示就是有问题"。先在文本层切走，think 部分单独渲染成 block，绕开
+ * 这个 inline-HTML 嵌套困境。
+ *
+ * ## 多行 / 嵌套
+ * regex 用 `[\s\S]*?` 非贪婪匹配，自动跨行；切出来的 think 内部还有嵌套
+ * markdown（bold/code/link）由内层 `<Markdown>` 再次 parse。
+ */
+function splitAroundThink(text: string): Array<{ kind: "md" | "think"; content: string }> {
+  const parts: Array<{ kind: "md" | "think"; content: string }> = [];
+  const re = /<thinking>([\s\S]*?)<\/thinking>/g;
+  let lastIdx = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > lastIdx) {
+      parts.push({ kind: "md", content: text.slice(lastIdx, m.index) });
+    }
+    parts.push({ kind: "think", content: m[1] });
+    lastIdx = m.index + m[0].length;
+  }
+  if (lastIdx < text.length) {
+    parts.push({ kind: "md", content: text.slice(lastIdx) });
+  }
+  return parts;
+}
+
+interface ThinkBlockProps {
+  text: string;
+  className?: string;
+}
+
+function ThinkBlock({ text, className }: ThinkBlockProps) {
+  // 视觉跟 ReasoningBlock 完全一致：浅灰背景、小字号、my-2 间距、leading-relaxed。
+  // 原因见 ReasoningBlock.tsx 的 doc：think 和 reasoning_content 是同一类信息。
+  return (
+    <div
+      className={cn(
+        "my-2 whitespace-pre-wrap rounded bg-muted/40 px-3 py-2 text-[11.5px] leading-relaxed text-muted-foreground",
+        className
+      )}
+    >
+      <Markdown>{text}</Markdown>
+    </div>
+  );
+}
+
+/**
  * Markdown — 把 markdown 字符串渲染成 HTML。
  *
  * 性能合约（性能优化 round 1）：
- * - 用 `React.memo` 包装：props 完全 shallow-equal 时**跳过整次 render**，
- *   避免在 ChatPanel 整体重 render 时连带重新解析已确定不变的 markdown。
- *   这是 streaming 期间的关键优化 —— ChatPanel 每次接 chunk 都会 rerender
- *   → 之前会让所有 message 的 markdown 都重 parse → 主线程吃满。
+ * - 用 `React.memo` 包装：props 完全 shallow-equal 时**跳过整次 render**。
  * - props 故意保持简单（children / className / streaming 都是 primitive
- *   类型），React.memo 的默认浅比较足够；不需要自定义 areEqual。
+ *   类型），React.memo 的默认浅比较足够。
  *
- * 进一步优化：流式场景下应使用 `<MarkdownStream>` —— 它会把 markdown 切为
- * 「稳定 prefix」+「实时 tail」，让本组件在最坏情况也只重 parse 增量段落。
+ * 进一步优化：流式场景下应使用 `<MarkdownStream>`，并且当前 pre-split
+ * 切 think 块对 streaming 中间态也安全：未闭合的 think 会被 regex 跳过，
+ * 剩余的 md 段单独走 react-markdown，layout 上不会出 `<p><div>`。
  */
 export const Markdown = memo(function Markdown({
   children,
   className,
   streaming,
 }: Props) {
+  const proseClassName = cn(
+    "prose prose-sm dark:prose-invert max-w-none",
+    "prose-headings:font-semibold prose-headings:tracking-tight",
+    "prose-h1:text-xl prose-h1:mt-6 prose-h1:mb-3",
+    "prose-h2:text-lg prose-h2:mt-5 prose-h2:mb-2",
+    "prose-h3:text-base prose-h3:mt-4 prose-h3:mb-1.5",
+    "prose-p:leading-relaxed prose-p:my-2",
+    "prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5",
+    "prose-hr:my-3 prose-hr:border-border",
+    "prose-pre:my-0 prose-pre:p-0 prose-pre:bg-transparent",
+    "prose-code:before:content-none prose-code:after:content-none",
+    "prose-blockquote:my-2 prose-blockquote:text-foreground/85",
+    "prose-table:text-sm",
+    "prose-thead:border-b prose-thead:border-border",
+    "prose-a:text-primary prose-a:no-underline hover:prose-a:underline",
+    streaming && "streaming-cursor",
+    className
+  );
+
+  const parts = splitAroundThink(children ?? "");
+
+  // 没有 think 块：纯走原路径，保持单次 react-markdown 渲染（性能最优）。
+  if (parts.length === 1 && parts[0]!.kind === "md") {
+    return (
+      <div className={proseClassName}>
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm, remarkBreaks]}
+          rehypePlugins={[rehypeRaw, [rehypeHighlight, { detect: true }]]}
+          components={markdownComponents}
+        >
+          {parts[0]!.content}
+        </ReactMarkdown>
+      </div>
+    );
+  }
+
+  // 有 think 块：交错渲染 md 段 + think block。
+  // 每个 md 段嵌套在自己 prose 容器里（避免 prose className 重叠导致的样式继承 bug）。
   return (
-    <div
-      className={cn(
-        "prose prose-sm dark:prose-invert max-w-none",
-        "prose-headings:font-semibold prose-headings:tracking-tight",
-        "prose-h1:text-xl prose-h1:mt-6 prose-h1:mb-3",
-        "prose-h2:text-lg prose-h2:mt-5 prose-h2:mb-2",
-        "prose-h3:text-base prose-h3:mt-4 prose-h3:mb-1.5",
-        "prose-p:leading-relaxed prose-p:my-2",
-        "prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5",
-        "prose-hr:my-3 prose-hr:border-border",
-        "prose-pre:my-0 prose-pre:p-0 prose-pre:bg-transparent",
-        "prose-code:before:content-none prose-code:after:content-none",
-        // blockquote：去掉默认的左边框（用户截图反馈"工具卡下面第一段被浅色边框框住"——
-        // AGNO 把 tool result 后的 agent commentary 用 `> ` 前缀持久化，进入前端就是 blockquote，
-        // prose 默认 border-l-2 在这里视觉太突兀）。保留元素但去掉强边框/斜体，
-        // 走正常段落样式，仅靠缩进区分（如果需要）。
-        // 想加微弱视觉区分时再迭代，不要默认就加边框。
-        "prose-blockquote:my-2 prose-blockquote:text-foreground/85",
-        "prose-table:text-sm",
-        "prose-thead:border-b prose-thead:border-border",
-        "prose-a:text-primary prose-a:no-underline hover:prose-a:underline",
-        streaming && "streaming-cursor",
-        className
+    <Fragment>
+      {parts.map((p, i) =>
+        p.kind === "md" ? (
+          <div key={i} className={proseClassName}>
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm, remarkBreaks]}
+              rehypePlugins={[rehypeRaw, [rehypeHighlight, { detect: true }]]}
+              components={markdownComponents}
+            >
+              {p.content}
+            </ReactMarkdown>
+          </div>
+        ) : (
+          <ThinkBlock key={i} text={p.content} />
+        )
       )}
-    >
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkBreaks]}
-        rehypePlugins={[rehypeRaw, [rehypeHighlight, { detect: true }]]}
-        components={markdownComponents}
-      >
-        {children}
-      </ReactMarkdown>
-    </div>
+    </Fragment>
   );
 });
