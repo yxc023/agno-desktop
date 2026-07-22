@@ -35,6 +35,70 @@ export function pickCwd(args: any): string | undefined {
 }
 
 /**
+ * AGNO 工具的结果常常被包一层外层对象 —— 实际"用户可见的数据"在内层 key 里：
+ *   - web_search / web_fetch → `{ results: [{url, title, excerpt}, ...], search_id, ... }`
+ *   - list_files            → `{ files: [{path, type, size}, ...], directory, ... }`
+ *   - query_my_codebase     → 有时 `{ files: [...] }`（带额外元数据）
+ *   - 一些自定义工具        → `{ data: [...] }` / `{ items: [...] }` / `{ output: [...] }`
+ *
+ * 这次实拍 AGNO web_search 的 ToolCallCompleted 事件，`data.tool.result` 是
+ * `'{"results":[...],"search_id":"..."}'`，前端 parse 后得到的是这个 wrapper；
+ * 之前 `GenericResultRenderer` 只检查 `Array.isArray(result)` —— 命中 false，
+ * 直接走 JSON 兜底，**用户看不到一条搜索结果，只看到一大坨 JSON**。
+ *
+ * 这个函数尝试把这些常用 wrapper key 拆开，返回"看起来像数据"的那一项。
+ * 找不到就原样返回 payload，调用方决定下一步（一般是 JSON dump）。
+ *
+ * 注意：**只对对象**操作。string / array / null 不动，传出去给调用方处理。
+ */
+export interface UnwrapResult {
+  payload: any;
+  /** 命中的 wrapper key（用于诊断 / 调试） */
+  wrapperKey?: string;
+  /** 是否被 unwrap 了（false 表示原样透传） */
+  unwrapped: boolean;
+}
+
+export function unwrapToolResult(result: any): UnwrapResult {
+  if (result === null || result === undefined) return { payload: result, unwrapped: false };
+  if (typeof result !== "object" || Array.isArray(result)) {
+    return { payload: result, unwrapped: false };
+  }
+  // 按常见度从高到低尝试 wrapper key。
+  // 顺序：web_search / web_fetch 用 results；list_files / search_knowledge 用 files；
+  // 后面是通用兜底。
+  const candidates = [
+    "results",
+    "files",
+    "items",
+    "data",
+    "output",
+    "content",
+  ];
+  for (const k of candidates) {
+    const v = (result as any)[k];
+    // 只对"非空数组"做 unwrap —— 避免把单字段对象误判为 wrapper。
+    if (Array.isArray(v) && v.length > 0) {
+      return { payload: v, wrapperKey: k, unwrapped: true };
+    }
+  }
+  return { payload: result, unwrapped: false };
+}
+
+/**
+ * 把 tool.result 字符串化版本（实际 AGNO 上行是 JSON string）parse 回对象。
+ * 不是 string 时原样返回。
+ */
+export function parseToolResultStringified(result: any): any {
+  if (typeof result !== "string") return result;
+  try {
+    return JSON.parse(result);
+  } catch {
+    return result;
+  }
+}
+
+/**
  * shell 工具识别 —— 跟 ToolCallCard 内的 SHELL_TOOLS 同步。
  * 抽出独立函数让 formatToolCallForCopy / ShellResultRenderer 都能复用。
  */
@@ -416,24 +480,49 @@ function formatOutputForCopy(tool: ToolCallPart): string[] {
     return lines;
   }
 
-  // 非 shell 工具
+  // 非 shell 工具 —— 跟 UI 渲染走同一条 unwrap 路径，避免 UI 看到列表但 copy 出来
+  // 是 wrapper 对象的情况。
   if (result === undefined || result === null) {
     lines.push("_(no output)_");
     return lines;
   }
-  if (typeof result === "string") {
-    if (result.length === 0) {
+
+  // 如果 result 还是 JSON 字符串，二次 parse（防御 chat-runner 未 parse 的场景）
+  const parsed = parseToolResultStringified(result);
+  if (typeof parsed === "string") {
+    if (parsed.length === 0) {
       lines.push("_(no output)_");
       return lines;
     }
     lines.push("```");
-    lines.push(result);
+    lines.push(parsed);
     lines.push("```");
     return lines;
   }
-  // 对象 / 数组：JSON
-  lines.push("```json");
-  lines.push(JSON.stringify(result, null, 2));
-  lines.push("```");
+
+  // 尝试解开 AGNO 常见 wrapper（web_search 的 `{results:[...]}` 等）
+  const unwrapped = unwrapToolResult(parsed);
+  const payload = unwrapped.payload;
+
+  if (typeof payload === "string") {
+    lines.push("```");
+    lines.push(payload);
+    lines.push("```");
+    return lines;
+  }
+  if (Array.isArray(payload)) {
+    // 让用户复制到的也是真正的数据列表，不是被 wrapper 包过的对象
+    lines.push("```json");
+    lines.push(JSON.stringify(payload, null, 2));
+    lines.push("```");
+    return lines;
+  }
+  if (typeof payload === "object" && payload !== null) {
+    lines.push("```json");
+    lines.push(JSON.stringify(payload, null, 2));
+    lines.push("```");
+    return lines;
+  }
+  lines.push("_(no output)_");
   return lines;
 }

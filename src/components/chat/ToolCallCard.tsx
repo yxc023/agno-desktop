@@ -18,6 +18,8 @@ import {
   truncateText,
   computeLcs,
   formatToolCallForCopy,
+  unwrapToolResult,
+  parseToolResultStringified,
 } from "@/lib/tool-render-utils";
 
 interface Props {
@@ -701,8 +703,18 @@ function ShellResultRenderer({
 /* ---------------------------------------------------------------- */
 
 function GenericResultRenderer({ tool }: { tool: ToolCallPart }) {
-  const result = tool.result;
   const name = tool.toolName;
+
+  // 关键修复：AGNO 上行 `tc.result` 是 JSON 字符串，ChatRunner 已经 parse 过一次
+  // （→ e.g. `{results:[...],search_id:"..."}`）。但不同工具把数据放在不同 key
+  // 里 —— 之前只看 `Array.isArray(result)`，碰到 wrapper 对象就 fallback 到
+  // JSON dump，让用户看到 `{"results":[...],"search_id":"..."}` 而非真正的
+  // 结果列表。这里先把 JSON 字符串二次 parse（冗余 safety），再尝试解开
+  // 常见 wrapper key（results / files / items / data / output / content），
+  // 把有意义的数组 / 字符串 / 对象渲染出来。
+  let result = parseToolResultStringified(tool.result);
+  const { payload, unwrapped, wrapperKey } = unwrapToolResult(result);
+  if (unwrapped) result = payload;
 
   if (typeof result === "string") {
     if (result.length > 5000) {
@@ -721,9 +733,14 @@ function GenericResultRenderer({ tool }: { tool: ToolCallPart }) {
   }
 
   if (Array.isArray(result)) {
-    // web_search：渲染成可点击链接列表（取代裸 JSON）
+    // search 风格工具（web_search / web_fetch / search_knowledge）：条目有
+    // {url, title, ...} 时渲染成可点击链接列表。
+    const isLinkList =
+      name === "web_search" ||
+      name === "web_fetch" ||
+      (name === "search_knowledge" && result.length > 0);
     if (
-      name === "web_search" &&
+      isLinkList &&
       result.length > 0 &&
       typeof result[0] === "object" &&
       (result[0].title || result[0].url)
@@ -771,6 +788,41 @@ function GenericResultRenderer({ tool }: { tool: ToolCallPart }) {
         </div>
       );
     }
+    // 列表 / 文件数组（list_files / query_my_codebase）：展示成 monospace
+    // 路径 / 标识列表 —— 比 JSON 更易读。
+    const looksLikeFileList =
+      name === "list_files" ||
+      name === "query_my_codebase" ||
+      (result[0] && typeof result[0] === "object" && "path" in result[0]);
+    if (looksLikeFileList) {
+      return (
+        <div className="overflow-hidden rounded border border-border/50">
+          {result.slice(0, 50).map((r: any, i: number) => (
+            <div
+              key={i}
+              className="flex items-center gap-2 border-b border-border/30 px-2 py-0.5 font-mono text-[10.5px] last:border-b-0"
+            >
+              <span className="w-3 shrink-0 text-center text-muted-foreground/50">
+                {r.type === "dir" ? "📁" : "·"}
+              </span>
+              <span className="truncate text-foreground/90">
+                {r.path ?? r.name ?? String(r)}
+              </span>
+              {r.size != null && (
+                <span className="ml-auto shrink-0 text-muted-foreground/60">
+                  {r.size}
+                </span>
+              )}
+            </div>
+          ))}
+          {result.length > 50 && (
+            <div className="border-t border-border/30 px-2 py-0.5 text-center font-mono text-[10px] text-muted-foreground/60">
+              +{result.length - 50} more
+            </div>
+          )}
+        </div>
+      );
+    }
     return (
       <CodeBlock
         language="json"
@@ -781,12 +833,21 @@ function GenericResultRenderer({ tool }: { tool: ToolCallPart }) {
   }
 
   if (typeof result === "object" && result !== null) {
+    // 无可识别的 wrapper —— 显示原始 JSON，至少比空白强。
+    // wrapperKey 给出提示（开发期可见，prod 用户也能猜到"工具返回结构变了"）
     return (
-      <CodeBlock
-        language="json"
-        value={JSON.stringify(result, null, 2)}
-        className="my-0"
-      />
+      <div className="space-y-1">
+        {wrapperKey && (
+          <div className="font-mono text-[10px] text-muted-foreground/60">
+            unwrapped from .{wrapperKey}
+          </div>
+        )}
+        <CodeBlock
+          language="json"
+          value={JSON.stringify(result, null, 2)}
+          className="my-0"
+        />
+      </div>
     );
   }
 

@@ -24,6 +24,8 @@ import {
   truncateText,
   isReadLikeTool,
   pickToolIdentifier,
+  unwrapToolResult,
+  parseToolResultStringified,
 } from "../src/lib/tool-render-utils";
 import type { ToolCallPart } from "../src/lib/message-types";
 
@@ -338,6 +340,141 @@ function main(): void {
     const out = truncateText("a".repeat(200), 50);
     assert(out.length > 50, "长于 max 截断");
     assert(out.includes("... (truncated, total 200 chars)"), "标注总长");
+  }
+
+  console.log("\n=== unwrapToolResult: 拆 AGNO 常见 wrapper ===");
+  {
+    // 字面量类型透传
+    assert(!unwrapToolResult(null).unwrapped, "null 透传");
+    assert(!unwrapToolResult(undefined).unwrapped, "undefined 透传");
+    assert(!unwrapToolResult("plain").unwrapped, "string 透传");
+    assert(!unwrapToolResult([1, 2]).unwrapped, "array 透传");
+
+    // web_search / web_fetch 风格：{results: [...]}
+    deepEq(
+      unwrapToolResult({
+        search_id: "x",
+        results: [{ url: "u1", title: "T1" }],
+      }),
+      {
+        payload: [{ url: "u1", title: "T1" }],
+        wrapperKey: "results",
+        unwrapped: true,
+      },
+      "{search_id, results: [...]}"
+    );
+
+    // list_files 风格：{files: [...]}
+    deepEq(
+      unwrapToolResult({
+        directory: "/x",
+        files: [{ path: "a.ts" }, { path: "b.ts" }],
+      }),
+      {
+        payload: [{ path: "a.ts" }, { path: "b.ts" }],
+        wrapperKey: "files",
+        unwrapped: true,
+      },
+      "{directory, files: [...]}"
+    );
+
+    // query_my_codebase / 通用 tool：{ data: [...] } 兜底
+    deepEq(
+      unwrapToolResult({
+        meta: "x",
+        data: [{ id: 1 }, { id: 2 }],
+      }),
+      {
+        payload: [{ id: 1 }, { id: 2 }],
+        wrapperKey: "data",
+        unwrapped: true,
+      },
+      "{meta, data: [...]}"
+    );
+
+    // 不识别的对象：原样透传
+    deepEq(
+      unwrapToolResult({ stdout: "x", stderr: "y", exit_code: 0 }),
+      {
+        payload: { stdout: "x", stderr: "y", exit_code: 0 },
+        unwrapped: false,
+      },
+      "shell style {stdout, stderr, exit_code} 不动（交给 pickShellOutput）"
+    );
+
+    // 空数组：不当作 wrapper（原样透传）
+    deepEq(
+      unwrapToolResult({ results: [], other: "x" }),
+      { payload: { results: [], other: "x" }, unwrapped: false },
+      "空 results 数组不展开"
+    );
+  }
+
+  console.log("\n=== parseToolResultStringified: 二次 JSON parse ===");
+  {
+    // AGNO 上行 tc.result 已经是 string（前端 chat-runner 已 parse 一次），
+    // 但有时（比如 history 加载路径）可能拿到没 parse 的 string —— 防御性再 parse。
+    deepEq(
+      parseToolResultStringified('{"a":1}'),
+      { a: 1 },
+      "JSON 字符串 → object"
+    );
+    deepEq(
+      parseToolResultStringified("[1,2,3]"),
+      [1, 2, 3],
+      "JSON 字符串 → array"
+    );
+    eq(parseToolResultStringified("plain text"), "plain text", "非 JSON 字符串原样");
+    eq(parseToolResultStringified(""), "", "空字符串原样");
+    deepEq(
+      parseToolResultStringified({ already: "object" }),
+      { already: "object" },
+      "非字符串直接返回"
+    );
+    deepEq(
+      parseToolResultStringified(null),
+      null,
+      "null 原样"
+    );
+  }
+
+  console.log("\n=== formatToolCallForCopy: web_search wrapper 也能解开 ===");
+  {
+    // 模拟 AGNO 实际返回的形态：tool.result 是对象 `{results: [...]}`，
+    // formatToolCallForCopy 应当解开 wrapper 复制到真正的列表内容，
+    // 而不是把 wrapper 整体 JSON 化（跟 UI 渲染一致）。
+    const realAGNOShape = {
+      search_id: "search_x",
+      results: [
+        { url: "https://a.example", title: "A" },
+        { url: "https://b.example", title: "B" },
+      ],
+      warnings: null,
+      usage: [{ name: "sku_search", count: 1 }],
+    };
+    const out = formatToolCallForCopy({
+      type: "tool_call",
+      toolCallId: "ws1",
+      toolName: "web_search",
+      args: { objective: "test" },
+      result: realAGNOShape,
+      status: "completed",
+      startedAt: 0,
+    } as any);
+    // 应该看到解开的列表，不是 wrapper 对象
+    assert(
+      out.includes('"url": "https://a.example"'),
+      "Output 段包含第一条结果的 url"
+    );
+    assert(out.includes('"title": "B"'), "Output 段包含第二条结果的 title");
+    assert(
+      !out.includes('"search_id": "search_x"'),
+      "Output 段不再包含 wrapper 元数据 search_id"
+    );
+    assert(
+      !out.includes('"warnings":'),
+      "Output 段不再包含 wrapper 元数据 warnings"
+    );
   }
 
   console.log("\n=== isShellTool: 工具名识别 ===");
