@@ -235,9 +235,8 @@ function ExpandedToolBody({ tool }: { tool: ToolCallPart }) {
   const hasResult =
     tool.result !== undefined && tool.result !== null && tool.result !== "";
 
-  // shell 工具：命令块 + 输出（不再单独列 args / output 标题）
-  // 注意：shell 工具的"输出"区是**无条件**渲染的 —— 哪怕 result 是空，
-  // 也显示 "(no output)"，避免出现"展开卡里啥都没有"的空白错觉。
+  // shell 工具：命令块 + 输出。OUTPUT 段无条件渲染（空 result 也显示占位），
+  // 用户不会看到一张空白展开卡。
   if (SHELL_TOOLS.has(name)) {
     const cmd = pickCommand(tool.args);
     const cwd = pickCwd(tool.args);
@@ -260,26 +259,38 @@ function ExpandedToolBody({ tool }: { tool: ToolCallPart }) {
             className="my-0"
           />
         )}
-        <div>
-          <div className="mb-1 flex items-center gap-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground/70">
-            output
-          </div>
+        <OutputSection>
           <ShellResultRenderer result={tool.result} status={tool.status} />
-        </div>
+        </OutputSection>
       </div>
     );
   }
 
-  // 文件编辑：直接展示 diff（不重复 path / 标 input-output）
+  // 文件编辑：path + diff + OUTPUT（diff 已经是 args 渲染，OUTPUT 单独给 result）
   if (name === "edit_file" || name === "str_replace" || name === "edit") {
     return (
-      <div className="px-2.5 py-2">
+      <div className="space-y-1.5 px-2.5 py-2">
         <EditBody tool={tool} />
+        {hasError && (
+          <CodeBlock
+            language="text"
+            value={tool.error ?? ""}
+            className="my-0"
+          />
+        )}
+        <OutputSection
+          showPlaceholder={!hasResult}
+          placeholderText={
+            tool.status === "error" ? "(failed)" : "(no output)"
+          }
+        >
+          <GenericResultRenderer tool={tool} />
+        </OutputSection>
       </div>
     );
   }
 
-  // 写文件：path + content
+  // 写文件：path + content（来自 args）+ OUTPUT（来自 result）
   if (name === "write_file") {
     return (
       <div className="space-y-1.5 px-2.5 py-2">
@@ -291,16 +302,23 @@ function ExpandedToolBody({ tool }: { tool: ToolCallPart }) {
             className="my-0"
           />
         )}
-        {hasResult && <GenericResultRenderer tool={tool} />}
+        <OutputSection
+          showPlaceholder={!hasResult}
+          placeholderText={
+            tool.status === "error" ? "(failed)" : "(no output)"
+          }
+        >
+          <GenericResultRenderer tool={tool} />
+        </OutputSection>
       </div>
     );
   }
 
-  // 读文件：path + content（content 即 result）
+  // 读文件：path + content（content 即 result）—— 内容以 OUTPUT 标签显示
   if (name === "read_file") {
     return (
       <div className="space-y-1.5 px-2.5 py-2">
-        <ReadBody tool={tool} />
+        <ReadBodyHeader tool={tool} />
         {hasError && (
           <CodeBlock
             language="text"
@@ -308,11 +326,19 @@ function ExpandedToolBody({ tool }: { tool: ToolCallPart }) {
             className="my-0"
           />
         )}
+        <OutputSection
+          showPlaceholder={!hasResult}
+          placeholderText={
+            tool.status === "error" ? "(failed)" : "(no content)"
+          }
+        >
+          <ReadBodyContent tool={tool} />
+        </OutputSection>
       </div>
     );
   }
 
-  // 通用：args + error + result（用 key-value 表格，不再是裸 JSON）
+  // 通用：args + error + OUTPUT（OUTPUT 段始终有，result 缺失时显示占位）
   return (
     <div className="space-y-1.5 px-2.5 py-2">
       {hasArgs && <KeyValueTable args={tool.args} />}
@@ -323,8 +349,72 @@ function ExpandedToolBody({ tool }: { tool: ToolCallPart }) {
           className="my-0"
         />
       )}
-      {hasResult && <GenericResultRenderer tool={tool} />}
+      <OutputSection
+        showPlaceholder={!hasResult}
+        placeholderText={
+          tool.status === "error" ? "(failed)" : "(no output)"
+        }
+      >
+        <GenericResultRenderer tool={tool} />
+      </OutputSection>
     </div>
+  );
+}
+
+/**
+ * 通用 OUTPUT 段 —— 任何工具展开时都有"输出"区域，无 result 时显示占位文案。
+ *
+ * 之前 read_file / write_file / 通用 路径都有 `{hasResult && <Renderer/>}`，
+ * 缺 result 时不渲染 —— 用户看到一张空白卡片的某部分，怀疑"返回去哪了"。
+ * 统一把 OUTPUT 段做成 always-render，placeholder 让"无返回" vs "有返回" 显式可辨。
+ */
+function OutputSection({
+  children,
+  showPlaceholder,
+  placeholderText = "(no output)",
+}: {
+  children: React.ReactNode;
+  /**
+   * 强制显示占位文案（即使 children 自身能渲染）。
+   * 用于 hasResult 为 false 但仍想给用户"这里是空"的明确信号的场景；
+   * shell 工具自己有更复杂的渲染（stdout/stderr/exit），不传这个 —— 没有
+   * result 时 ShellResultRenderer 内部已经显示 "(no output)"。
+   */
+  showPlaceholder?: boolean;
+  placeholderText?: string;
+}) {
+  return (
+    <div>
+      <div className="mb-1 flex items-center gap-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground/70">
+        <CheckCircle2Icon />
+        output
+      </div>
+      {showPlaceholder ? (
+        <div className="font-mono text-[10.5px] text-muted-foreground/60">
+          {placeholderText}
+        </div>
+      ) : (
+        children
+      )}
+    </div>
+  );
+}
+
+function CheckCircle2Icon() {
+  // 极简的内联 icon —— Tailwind 4 没把 check 一起打包，避免再添一个 import。
+  return (
+    <svg
+      width="10"
+      height="10"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.5"
+      className="text-success"
+      aria-hidden
+    >
+      <path d="M20 6 9 17l-5-5" />
+    </svg>
   );
 }
 
@@ -381,24 +471,32 @@ function WriteBody({ tool }: { tool: ToolCallPart }) {
   );
 }
 
-function ReadBody({ tool }: { tool: ToolCallPart }) {
+function ReadBodyHeader({ tool }: { tool: ToolCallPart }) {
+  const path = tool.args?.file_path ?? tool.args?.path;
+  return path ? <FilePathChip path={path} /> : null;
+}
+
+function ReadBodyContent({ tool }: { tool: ToolCallPart }) {
   const args = tool.args;
   const path = args?.file_path ?? args?.path;
-  const text =
-    typeof tool.result === "string"
-      ? tool.result
-      : JSON.stringify(tool.result, null, 2);
+  const result = tool.result;
+  if (result === undefined || result === null) return null;
+  if (typeof result === "string") {
+    return (
+      <CodeBlock
+        language={inferLang(path ?? "")}
+        value={truncateText(result, 20000)}
+        className="my-0"
+      />
+    );
+  }
+  // 对象 / 数组：JSON 化兜底
   return (
-    <>
-      {path && <FilePathChip path={path} />}
-      {typeof tool.result === "string" && (
-        <CodeBlock
-          language={inferLang(path ?? "")}
-          value={truncateText(text, 20000)}
-          className="my-0"
-        />
-      )}
-    </>
+    <CodeBlock
+      language="json"
+      value={JSON.stringify(result, null, 2)}
+      className="my-0"
+    />
   );
 }
 
