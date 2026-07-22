@@ -47,10 +47,13 @@ const markdownComponents: Components & {
     const language = langMatch?.[1];
 
     if (!language) {
-      // inline code：直接渲染子节点（highlight.js 不处理 inline）
+      // inline code：直接渲染子节点（highlight.js 不处理 inline）。
+      // 字号用 text-[0.92em]：prose-sm code 默认 0.875em，我们选 0.92em 让
+      // inline code 跟正文差距 ~1px（之前 0.85em 差 2px+，密度低的行里整段
+      // 像被 inline code "拉小"了——用户截图反馈"字看着特别小"）。
       return (
         <code
-          className="px-1.5 py-0.5 rounded bg-muted text-foreground font-mono text-[0.85em]"
+          className="px-1.5 py-0.5 rounded bg-muted text-foreground font-mono text-[0.92em]"
           {...props}
         >
           {children}
