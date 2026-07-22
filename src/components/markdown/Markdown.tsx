@@ -136,7 +136,12 @@ export const Markdown = memo(function Markdown({
         "prose-hr:my-3 prose-hr:border-border",
         "prose-pre:my-0 prose-pre:p-0 prose-pre:bg-transparent",
         "prose-code:before:content-none prose-code:after:content-none",
-        "prose-blockquote:border-l-2 prose-blockquote:border-border prose-blockquote:pl-3 prose-blockquote:not-italic prose-blockquote:text-foreground/85",
+        // blockquote：去掉默认的左边框（用户截图反馈"工具卡下面第一段被浅色边框框住"——
+        // AGNO 把 tool result 后的 agent commentary 用 `> ` 前缀持久化，进入前端就是 blockquote，
+        // prose 默认 border-l-2 在这里视觉太突兀）。保留元素但去掉强边框/斜体，
+        // 走正常段落样式，仅靠缩进区分（如果需要）。
+        // 想加微弱视觉区分时再迭代，不要默认就加边框。
+        "prose-blockquote:my-2 prose-blockquote:text-foreground/85",
         "prose-table:text-sm",
         "prose-thead:border-b prose-thead:border-border",
         "prose-a:text-primary prose-a:no-underline hover:prose-a:underline",
