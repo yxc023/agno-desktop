@@ -2,6 +2,23 @@
 
 All notable changes to Agno Desktop are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.0.8] - 2026-07-22
+
+### Added
+- **Tool-call UI is readable and copy-pasteable as a unit.** Single-line header `[icon] ToolName · summary  duration ▼`; copy-all button revealed on hover. Run-command / shell show the command directly in the header (`$ ls -la`). `edit_file` / `str_replace` render as a unified line-level diff instead of JSON. `write_file` / `read_file` / `list_directory` show file path + syntax-highlighted content. The copy-all button puts name + status + args + error + result + duration on the clipboard as Markdown — the Output section is always present (empty → `_(no output)_`, calling → `_(running, no output yet)_`). Implementations in `src/components/chat/ToolCallCard.tsx` + `src/lib/tool-render-utils.ts`.
+- **`pickShellOutput` normalizes every AGNO shell-result shape** seen in the wild: `{stdout, exit_code}` / `{output, exitCode}` / `{result, exit_code}` / `{output_text}` / `{response_text}` / `{message}` / Anthropic-style `[{type, text}]` content arrays. Falls back to raw result display when no recognizable field is found — no more blank expansions.
+- **Consecutive read-like tool calls are grouped** into a single card to save vertical space. `MessageContent` at `src/components/chat/MessageContent.tsx:88` packs consecutive `read_file` / `list_directory` / `query_my_codebase` / `search_knowledge` calls into one `ToolCallGroup` with a `Read 3 files · /a.ts · /b.ts · +1` header. Single calls stay as regular cards.
+- **Main left sidebar (AppShell) is now drag-resizable**, mirroring the chat-page column behavior. Width persists in `settings.sidebarWidth` (200–360px range), with double-click to reset. New shared primitives `src/components/common/VerticalResizeHandle.tsx` + `src/components/common/useColumnResize.ts` power both the main sidebar and the chat-page columns — `ChatPage` lost ~90 lines of inline `ResizeHandle` boilerplate in the process.
+
+### Fixed
+- **Input box now clears immediately on send.** Previously `MessageInput.tsx` cleared the textarea only after `await sendMessage(...)` resolved, so a slow / hanging AGNO request would freeze the user's text on screen. Now the text and files are cleared *synchronously* (`src/components/chat/MessageInput.tsx:57`) before the await — if `sendMessage` throws, the original text is restored so the user can retry without retyping.
+
+### Changed
+- **`/sessions` is now paginated.** Initial fetch drops from `limit=100` to `limit=15` because the endpoint is slow in some AGNO versions; the session-list footer adds a "加载更多 N/total" button (`src/components/sessions/SessionList.tsx:282`) to append more pages on demand. Per-instance pagination state in `src/stores/sessions-store.ts` (`{page, limit, totalCount, hasMore}` plus a `loadingMore` flag separate from the initial `loading`). The header count changes from `15` to `15/42` once the meta is known. `session_id` duplicates at page boundaries are deduped defensively.
+
+### Notes
+- 0.0.7 → 0.0.8 is the first release tagged after the streaming-markdown smoothness fix (cac6851) — the smoother-streaming work is in 0.0.7 but the rest of the uncommitted work between 0.0.7 and this release is bundled here.
+
 ## [0.0.7] - 2026-07-16
 
 ### Added

@@ -1,6 +1,6 @@
 [package]
 name = "agno-desktop"
-version = "0.0.7"
+version = "0.0.8"
 description = "Multi-instance local desktop client for AGNO AgentOS"
 authors = ["Michael"]
 license = "MIT"
