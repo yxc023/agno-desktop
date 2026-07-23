@@ -1,7 +1,7 @@
 /**
- * sessions-pagination.test.ts
+ * tests/sessions-store.test.ts
  *
- * 覆盖 sessions-store 的分页行为：
+ * sessions-store 的核心契约：
  *   - 初始 loadSessions 用 limit=15, page=1
  *   - loadMoreSessions 拉下一页并 append
  *   - hasMore / totalCount 来自 meta.total_count
@@ -13,6 +13,8 @@
  *
  * AGNO /sessions 接口在某些版本上 limit=100 很慢。把默认拉取量降到 15，
  * 后续让用户主动点"加载更多"。本测试守住"少拉、按需拉"的核心契约。
+ *
+ * 后续要补的实例管理 / search / rename / delete 相关测试也加到这里。
  */
 /* oxlint-disable */
 
