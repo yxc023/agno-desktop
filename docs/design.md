@@ -230,3 +230,8 @@ runner.resume(lastEventIndex)
 | P2 | Light mode 完善 | 0.5d |
 | P2 | 多窗口（Tauri 包装） | 5d |
 | P3 | Knowledge 搜索 | 2d |
+
+## 相关文档
+
+- [`api-mapping.md`](./api-mapping.md) — AGNO OpenAPI ↔ 前端用法
+- [`technical-debt.md`](./technical-debt.md) — `feature/chat-streaming-ux` 分支遗留的已知问题与设计债
