@@ -39,6 +39,7 @@ import { cn } from "@/lib/utils";
 import { UserIdSetupDialog } from "@/components/common/UserIdSetupDialog";
 import { useAutoScroll } from "@/hooks/use-auto-scroll";
 import { useHashScroll, writeMessageHash } from "@/hooks/use-hash-scroll";
+import { clearAllShadows } from "@/lib/chat-buffer";
 
 const EXAMPLE_PROMPTS = [
   {
@@ -98,6 +99,17 @@ export function ChatPanel() {
   } = useAutoScroll({ enabled: autoScroll });
 
   const hashTargetId = useHashScroll();
+
+  /**
+   * 切换 active instance 时清掉所有 shadow map 残留——chunks 已不再属于
+   * 这个 instance 的 session 了；保留只会占 module-level Map 内存。
+   * (chat-buffer 模块级 shadow 是按 messageId 索引的，不带 instance 前缀。)
+   */
+  useEffect(() => {
+    return () => {
+      clearAllShadows();
+    };
+  }, [active?.id]);
 
   /**
    * Hash 深链 (URL 自带 #message-X，或 popstate / 用户在地址栏改 hash) active
@@ -408,7 +420,14 @@ export function ChatPanel() {
         >
           {currentSessionId && messages.length > 0 ? (
             <div className="mx-auto max-w-4xl py-6">
+              {/* key={cacheKey} 让 session 切换时完整 remount：
+                   - virtualizer 重新构造，initialMeasurementsCache 从
+                     TimelineCache 命中（之前 cacheKey 变化但 hook 实例
+                     不变是死代码）
+                   - 内部 useRef / MutationObserver / RAF scheduler 都重新初始化
+                     跨 session 不残留状态 */}
               <VirtualMessageList
+                key={currentSessionId}
                 messages={messages}
                 scrollRef={scrollRef}
                 loadingHistory={loadingHistory}

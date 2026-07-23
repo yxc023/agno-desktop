@@ -1823,13 +1823,35 @@ export const useChatStore = create<ChatState>((set, get) => ({
         useSessionsStore.getState().loadSessions(activeId, true);
         // Shadow 已无意义——消息状态变 completed，下次 loadHistory 不会再
         // 触发 merge。避免长期累积。
+        // 同时清理 sub-messages 的 shadow；team / multi-agent 场景下每个
+        // sub 也累计了 streaming 文本。
         const finalMsg = runner.getCurrentMessage();
-        if (finalMsg) clearShadowForMessage(finalMsg.id);
+        if (finalMsg) {
+          clearShadowForMessage(finalMsg.id);
+          if (finalMsg.subMessages) {
+            for (const sub of finalMsg.subMessages) {
+              clearShadowForMessage(sub.id);
+            }
+          }
+        }
       },
       onRunError: (runId: string, err: string) => {
         console.error("Run error", runId, err);
         const finalMsg = runner.getCurrentMessage();
-        if (finalMsg) clearShadowForMessage(finalMsg.id);
+        if (finalMsg) {
+          clearShadowForMessage(finalMsg.id);
+          if (finalMsg.subMessages) {
+            for (const sub of finalMsg.subMessages) {
+              clearShadowForMessage(sub.id);
+            }
+          }
+        }
+      },
+      onSubMessageFinalized: (parentMessageId: string, sub: ChatMessage) => {
+        // sub-agent run 完成（成功 / error / cancelled）— 清它的 shadow。
+        // 之前 onRunCompleted + onRunError 会清 top + 父 sub，但其他分支
+        // （HIL cancel-by-tool、sub 单独 error 等）下这条路径是唯一的 hook。
+        clearShadowForMessage(sub.id);
       },
       onRunPaused: () => {
         // pause 状态由 runner 内部状态驱动，UI 层会读取 awaitingInput

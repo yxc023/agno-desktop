@@ -114,26 +114,44 @@ export function getShadowText(
  *   - shadow 是 incoming 的前缀 → SSE 已经走得更远，用 shadow 替换
  *   - shadow 不在 incoming 的前缀 → 异常情况（shadow 丢了），原样用 incoming
  *
+ * **递归**：team / multi-agent 场景下 message.subMessages[] 也有自己的
+ * text part，shadow 也按 messageId 单独存（sub.messageId 是 sub.id），
+ * 所以需要递归 merge — 不然 loadHistory 的 snapshot 会用旧
+ * sub-message parts 把 streaming 中的 sub-agent 内容抹掉。
+ *
  * 返回：mutated message（新对象，原 message 不变）。
  */
 export function mergeShadowIntoMessage(message: ChatMessage): ChatMessage {
-  const map = shadowTextByMessage.get(message.id);
-  if (!map || map.size === 0) return message;
-  const newParts = message.parts.map((p, i) => {
-    if (p.type !== "text") return p;
-    const shadow = map.get(i);
-    if (shadow === undefined) return p;
-    if (shadow.startsWith(p.text)) {
-      return { ...p, text: shadow };
-    }
-    return p;
-  });
-  // 优化：如果没有任何 part 被改，返回原对象
-  const changed = newParts.some(
-    (np, i) => np !== message.parts[i]
-  );
-  if (!changed) return message;
-  return { ...message, parts: newParts };
+  const topMap = shadowTextByMessage.get(message.id);
+  let topChanged = false;
+  let newParts = message.parts;
+  if (topMap && topMap.size > 0) {
+    newParts = message.parts.map((p, i) => {
+      if (p.type !== "text") return p;
+      const shadow = topMap.get(i);
+      if (shadow === undefined) return p;
+      if (shadow.startsWith(p.text)) {
+        topChanged = true;
+        return { ...p, text: shadow };
+      }
+      return p;
+    });
+  }
+
+  // 递归 merge subMessages（每条 sub 是独立的 ChatMessage，shadow 按 sub.id 索引）
+  let newSubs = message.subMessages;
+  let subChanged = false;
+  if (message.subMessages && message.subMessages.length > 0) {
+    const mergedSubs = message.subMessages.map((sub) => {
+      const m = mergeShadowIntoMessage(sub);
+      if (m !== sub) subChanged = true;
+      return m;
+    });
+    if (subChanged) newSubs = mergedSubs;
+  }
+
+  if (!topChanged && !subChanged) return message;
+  return { ...message, parts: newParts, subMessages: newSubs };
 }
 
 /**

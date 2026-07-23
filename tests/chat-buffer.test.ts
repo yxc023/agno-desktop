@@ -128,6 +128,47 @@ function main(): void {
     );
   }
 
+  console.log("=== merge: subMessages 递归 ===");
+  {
+    _resetBufferForTesting();
+    const top = textMsg("top", ["team text"]);
+    const sub1 = textMsg("sub1", ["sub1 older"]);
+    const sub2 = textMsg("sub2", ["sub2 older"]);
+    top.subMessages = [sub1, sub2];
+    // SSE 累积：top 没变，sub1/sub2 已 streaming 推进（shadow 是 snapshot 的前缀）
+    captureShadowFromMessage(top);
+    captureShadowFromMessage(textMsg("sub1", ["sub1 older streaming latest"]));
+    captureShadowFromMessage(textMsg("sub2", ["sub2 older streaming latest"]));
+
+    // loadHistory snapshot — sub 用旧 text（shadow 的前缀）
+    const snap = textMsg("top", ["team text"]);
+    snap.subMessages = [
+      textMsg("sub1", ["sub1 older"]),
+      textMsg("sub2", ["sub2 older"]),
+    ];
+
+    const merged = mergeShadowIntoMessage(snap);
+    assert(merged.subMessages !== undefined, "subMessages 保留");
+    assert(
+      merged.subMessages![0]!.parts[0]!.text === "sub1 older streaming latest",
+      "sub1 用 shadow 替换（snapshot 是 shadow 前缀）"
+    );
+    assert(
+      merged.subMessages![1]!.parts[0]!.text === "sub2 older streaming latest",
+      "sub2 用 shadow 替换（snapshot 是 shadow 前缀）"
+    );
+  }
+
+  console.log("=== merge: subMessages 没变化时不重建引用 ===");
+  {
+    _resetBufferForTesting();
+    const sub = textMsg("sub", ["text"]);
+    const top = textMsg("top", ["text"]);
+    top.subMessages = [sub];
+    const merged = mergeShadowIntoMessage(top);
+    assert(merged === top, "无 shadow + sub 无变化 → 返回原对象");
+  }
+
   console.log("=== clearShadowForMessage ===");
   {
     _resetBufferForTesting();
