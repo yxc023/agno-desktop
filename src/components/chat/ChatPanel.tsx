@@ -100,10 +100,18 @@ export function ChatPanel() {
   const hashTargetId = useHashScroll();
 
   /**
-   * Hash 深链 active 时，强制 pause autoScroll——
-   * 避免 useAutoScroll 内的 ResizeObserver 在虚拟化器内容变化时把视口
-   * 拉回底部，覆盖我们 scrollToIndex 的跳转位置。
-   * 用户点 "back to bottom" 时 jumpToBottom 显式恢复，不影响。
+   * Hash 深链 (URL 自带 #message-X，或 popstate / 用户在地址栏改 hash) active
+   * 时 pause autoScroll——避免 useAutoScroll 内的 ResizeObserver 在虚拟化器
+   * 内容变化时把视口拉回底部，覆盖 VirtualMessageList 的 scrollToIndex 跳转。
+   *
+   * "自写" hash（auto-tracking 滚动位置时调 writeMessageHash({ silent: true })）
+   * 不会更新 useHashScroll 的 target state，hashTargetId 保持不变 → 本 effect
+   * 不会重复触发 → autoscroll 正常工作。这是修"reload 后 autoscroll 失活"
+   * 这个 bug 的核心：之前两者都会设 hash → 一旦 auto-tracking 写入 hash，
+   * pause 就被永久锁住。
+   *
+   * Resume：用户点 "back to bottom" 按钮（jumpToBottom）或自然滚回底部
+   * （handleScroll: user-paused → sticky）都会重新激活 autoscroll。
    */
   useEffect(() => {
     if (hashTargetId) pauseAutoScroll();
@@ -150,7 +158,10 @@ export function ChatPanel() {
    */
   const handleActiveMessageChange = useCallback((id: string | null) => {
     if (!id) return;
-    writeMessageHash(id);
+    // silent: true → useHashScroll 看到这次 hashchange 时不更新 target state，
+    // 避免 ChatPanel 的 pauseAutoScroll effect 因"自写 hash"被反复触发，
+    // 永久 disable autoscroll（之前 reload 后 autoscroll 失活的根因）。
+    writeMessageHash(id, { silent: true });
   }, []);
 
   if (!active) {

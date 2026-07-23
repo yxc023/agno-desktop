@@ -7,6 +7,7 @@
 import {
   parseHashForTest,
   writeMessageHashForTest,
+  getExpectedSelfWriteHashForTest,
 } from "../src/hooks/use-hash-scroll";
 
 let failed = 0;
@@ -60,6 +61,39 @@ function main(): void {
     replaceCalls.length = 0;
     writeMessageHashForTest("foo", { getHash, replace: fakeReplace });
     assert(replaceCalls.length === 0, "current 是非 message hash → 不写（不覆盖其他状态）");
+  }
+
+  console.log("=== writeMessageHash: silent 选项标记 expectedSelfWriteHash ===");
+  {
+    let currentHash = "#message-old";
+    const fakeReplace: typeof history.replaceState = (
+      _s,
+      _t,
+      url?: string | null,
+    ) => {
+      if (url) currentHash = new URL("http://x" + url).hash;
+    };
+    const getHash = () => currentHash;
+    // 重置 module-level state
+    const _ = getExpectedSelfWriteHashForTest;
+    writeMessageHashForTest("new", {
+      getHash,
+      replace: fakeReplace,
+      silent: false,
+    });
+    assert(
+      getExpectedSelfWriteHashForTest() === null,
+      "silent=false 不设置 expectedSelfWriteHash"
+    );
+    writeMessageHashForTest("another", {
+      getHash,
+      replace: fakeReplace,
+      silent: true,
+    });
+    assert(
+      getExpectedSelfWriteHashForTest() === "#message-another",
+      "silent=true 设置 expectedSelfWriteHash 为目标 hash"
+    );
   }
 }
 

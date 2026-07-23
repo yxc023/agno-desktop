@@ -53,7 +53,20 @@ export function useHashScroll(options: UseHashScrollOptions = {}): string | null
   const [target, setTarget] = useState<string | null>(() => parseHash(getHashRef.current()));
 
   useEffect(() => {
-    const update = () => setTarget(parseHash(getHashRef.current()));
+    const update = () => {
+      const next = parseHash(getHashRef.current());
+      // 跳过"自写"触发的 hashchange：writeMessageHash({ silent: true })
+      // 设置了 expectedSelfWriteHash，下一个 hashchange 与之匹配时忽略，
+      // 避免 useHashScroll 的 target state 抖动 → 调用方的 pause/render 副作用不触发。
+      if (next === expectedSelfWriteHash) {
+        expectedSelfWriteHash = null;
+        return;
+      }
+      // 其他 hashchange（popstate / 用户在地址栏改 URL 等）清掉 expected flag，
+      // 因为任何 user-driven 变更都不能算"自写"。
+      expectedSelfWriteHash = null;
+      setTarget(next);
+    };
     const unsub = subscribeRef.current(update);
     const onHashChange = () => update();
     window.addEventListener("hashchange", onHashChange);
@@ -73,17 +86,43 @@ export function useHashScroll(options: UseHashScrollOptions = {}): string | null
  * - 当前 hash 是其他 message → replaceState（不增加 history）
  * - 当前 hash 是非 message 形式（#foo）→ replaceState 成 #message-<id>
  * - 当前 hash 为空 → 不写（保持 URL 干净）
+ *
+ * `silent: true`：标记这次写入是"自写"（自动追踪滚动位置时调用）。
+ * 下次浏览器派发的 hashchange 事件如果命中刚写入的目标，useHashScroll
+ * 会忽略它，不让 target state 抖动，从而不触发调用方的 hashTargetId
+ * effect（如 ChatPanel 的 pauseAutoScroll）。这是修"auto-scroll 被自写
+ * hash 永久 disable"这个 bug 的核心机制。
  */
 export function writeMessageHash(
   messageId: string,
-  options: { getHash?: () => string | null | undefined; replace?: typeof history.replaceState } = {}
+  options: {
+    getHash?: () => string | null | undefined;
+    replace?: typeof history.replaceState;
+    silent?: boolean;
+  } = {}
 ): void {
   writeMessageHashInner(messageId, options);
 }
 
+/**
+ * 模块级 ref：useHashScroll 的 hashchange listener 读取它来决定
+ * 下一个 hashchange 是不是自写、要不要忽略。写时（silent）置入目标 hash，
+ * 下次匹配即消费掉；任何 user-driven 变更都清空它。
+ */
+let expectedSelfWriteHash: string | null = null;
+
+/** 测试导出：读取自写期望的 hash（用于断言）。 */
+export function getExpectedSelfWriteHashForTest(): string | null {
+  return expectedSelfWriteHash;
+}
+
 function writeMessageHashInner(
   messageId: string,
-  options: { getHash?: () => string | null | undefined; replace?: typeof history.replaceState } = {}
+  options: {
+    getHash?: () => string | null | undefined;
+    replace?: typeof history.replaceState;
+    silent?: boolean;
+  } = {}
 ): void {
   const getHash = options.getHash;
   const replace = options.replace;
@@ -92,6 +131,9 @@ function writeMessageHashInner(
   if (cur === target) return;
   // 只在用户已经在 message hash 上时覆盖；空 hash 不要强行加（避免打扰分享干净的 URL）
   if (!cur || !cur.startsWith(HASH_PREFIX)) return;
+  if (options.silent) {
+    expectedSelfWriteHash = target;
+  }
   const r = replace ?? history.replaceState.bind(history);
   const path = typeof window !== "undefined" ? window.location.pathname : "";
   const search = typeof window !== "undefined" ? window.location.search : "";
@@ -101,7 +143,11 @@ function writeMessageHashInner(
 /** 测试导出：直接调内部版本，避免依赖 window。 */
 export function writeMessageHashForTest(
   messageId: string,
-  options: { getHash?: () => string | null | undefined; replace?: typeof history.replaceState } = {}
+  options: {
+    getHash?: () => string | null | undefined;
+    replace?: typeof history.replaceState;
+    silent?: boolean;
+  } = {}
 ): void {
   writeMessageHashInner(messageId, options);
 }
