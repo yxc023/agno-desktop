@@ -6,10 +6,12 @@ All notable changes to Agno Desktop are documented here. Versions follow [Semant
 
 ### Added
 - **`useAutoScroll` hook** (`src/hooks/use-auto-scroll.ts`) — 取代 `ChatPanel.tsx` 里的内联 `ResizeObserver` + `onScroll` + `useRef` 状态机。背后是一个纯状态机类 `AutoScrollController` (`src/lib/auto-scroll-controller.ts`，三态：`sticky` / `user-paused` / `auto-snapping`)，30 条单元测试覆盖所有转移路径 + `markAuto` 窗口 + 嵌套 `[data-scrollable]` 滚轮过滤。修掉了之前 `behavior: "smooth"` 在 streaming 时被自己触发的 scroll 事件打断跟随的问题。
+- **`VirtualMessageList`** (`src/components/chat/VirtualMessageList.tsx`) — 用 `@tanstack/react-virtual` 把 `messages.map(MessageBubble)` 换成虚拟化列表。1000+ 条 message 的 session 现在只渲染 viewport + overscan 内的行（默认 80px estimateSize + overscan 6），不再全部挂载；streaming 增长由 TanStack ResizeObserver 测量 + `useAutoScroll` 的 RO 自动 snap。配套新增 `src/lib/timeline-cache.ts`（LRU 16 entries，借鉴 OpenCode `timelineCache` 为后续 cross-mount 测量复用做准备）。
 
 ### Fixed
 - **Chat autoscroll 现在跟得住长回复、不会"中途掉链"**。之前 `ChatPanel.tsx:128-143` 的 `ResizeObserver` + `behavior: "smooth"` 组合有两个隐藏问题：(1) `scrollTo({behavior: "smooth"})` 触发的 scroll 事件会被 `onScroll` 误判为"用户滚走了"——正在 streaming 时容器突然不再 auto-scroll；(2) 没设 `overflow-anchor`，浏览器原生 anchor 在 streaming 期间往下拽视图。新 hook 提供 `markAutoMs`（1500ms）窗口让自触发 scroll 不被误读，并在 `sticky` 时把容器 `overflow-anchor` 设为 `none` 让原生 anchor 别打架；同时支持 wheel 向上滚检测 + 嵌套 `[data-scrollable]` 滚轮过滤。
 - **Markdown 流式渲染现在按 ~24ms 节奏释放文本，而不是每 token 一次 React render**。新增 `usePacedValue` hook (`src/hooks/use-paced-value.ts`) + 纯逻辑类 `PacedValueController` (`src/lib/paced-value.ts`，20 条单元测试)。借鉴 OpenCode `createPacedValue`：短差异（≤512 字符）同步跟上；长差异每 24ms 推一段，chunk 大小按 remaining 自适应（256/128/64/16/4 阶梯），snap 到最近的空白/标点避免"半截 token"。`MarkdownStream.tsx` 现在用 `usePacedValue(() => children, { isLive: () => streaming })` 接管输入，配合已有的 `React.memo` 让 `<Markdown>` 在 paced text 不变时跳过整次 render。非流式（`streaming=false` 或历史回放）一次性同步跟上，零延迟。
+- **长 session（1000+ 条消息）现在不会一次 mount 全部 MessageBubble**。之前 `ChatPanel.tsx` 的 `messages.map((m) => <MessageBubble />)` 在切到长 session 时会一次性 mount 所有 message，每个都跑自己的 Markdown 解析。`VirtualMessageList` 只挂载 viewport 内 + overscan 6 条，单 session DOM 节点数从 O(N) 降到 O(可见窗口)。
 
 ## [0.0.8] - 2026-07-22
 

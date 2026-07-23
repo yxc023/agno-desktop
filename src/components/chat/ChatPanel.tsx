@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { MessageBubble } from "./MessageBubble";
+import { VirtualMessageList } from "./VirtualMessageList";
 import { MessageInput } from "./MessageInput";
 import { ContextProgressBar } from "./ContextProgressBar";
 import { useChatStore, useCurrentSessionMessages, useLatestInputTokens, useLatestModelId } from "@/stores/chat-store";
@@ -372,14 +372,11 @@ export function ChatPanel() {
         >
           {currentSessionId && messages.length > 0 ? (
             <div className="mx-auto max-w-4xl py-6">
-              {messages.map((m, i) => (
-                <MessageBubble key={m.id} message={m} />
-              ))}
-              {loadingHistory && (
-                <div className="flex justify-center py-4">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
-                </div>
-              )}
+              <VirtualMessageList
+                messages={messages}
+                scrollRef={scrollRef}
+                loadingHistory={loadingHistory}
+              />
             </div>
           ) : currentSessionId && (loadingHistory || !loadedHistory) ? (
             // 历史还没回来（或正在拉取）时显示 skeleton，

@@ -27,6 +27,7 @@
     "@radix-ui/react-tabs": "^1.1.16",
     "@radix-ui/react-toast": "^1.2.18",
     "@radix-ui/react-tooltip": "^1.2.10",
+    "@tanstack/react-virtual": "^3.14.8",
     "@tauri-apps/plugin-http": "^2.5.9",
     "@tauri-apps/plugin-process": "^2.3.1",
     "@tauri-apps/plugin-shell": "^2.3.5",
