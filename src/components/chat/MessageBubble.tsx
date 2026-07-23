@@ -141,8 +141,7 @@ const AssistantMessage = memo(function AssistantMessage({ message, onCopy }: Pro
   return (
     <div
       className={cn(
-        "group relative animate-fade-in px-4 pt-2 pb-6",
-        isStreaming && "border-l-2 border-accent/30"
+        "group relative animate-fade-in px-4 pt-2 pb-6"
       )}
     >
       <div className="mx-auto max-w-4xl">

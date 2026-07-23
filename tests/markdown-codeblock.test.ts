@@ -1,6 +1,6 @@
 /**
  * Markdown code block rendering — regression tests for the
- * "[object Object]" bug.
+ * "[object Object]" bug + worker-based highlighting contract.
  *
  * Bug history:
  *   - `Markdown.tsx` 的 `code` 组件用 `String(children ?? "")` 把 react-markdown
@@ -10,20 +10,16 @@
  *   - 用户看到代码块里出现一串 "[object Object]" 字样，无法正确显示内容。
  *
  * 修复：
- *   - `Markdown.tsx` 的 `code` 直接把 children 透传给 `CodeBlock`，由 `CodeBlock`
- *     自己渲染子树（保留 hljs 高亮）；需要复制时再递归抽文本。
- *   - inline vs block 改用 className 里的 `language-*` 区分（替代失效的 position 检查）。
- *   - `CodeBlock` 同时支持 `value`（string，ToolCallCard 用法）和 `children`
- *     （ReactNode，markdown 渲染用法）。
+ *   - `Markdown.tsx` 的 `code` 把 children 拍平成 string 传给 `CodeBlock`。
+ *   - inline vs block 改用 className 里的 `language-*` 区分。
+ *   - `CodeBlock` 通过 Web Worker 异步高亮（见 `useHighlight`），静态 markup
+ *     阶段还没拿到 worker 响应，所以渲染 plain text；highlight 到了之后
+ *     通过 `dangerouslySetInnerHTML` 替换。
  *
  * Usage:
  *   bun run tests/markdown-codeblock.test.ts
  */
 /* oxlint-disable react/no-children-prop */
-// 用 `React.createElement(Markdown, { children: ... })` 才能在 .test.ts 里渲染
-// React 组件（项目测试统一用 .ts 后缀，不开 .tsx）；用 JSX prop 形式会触发
-// oxlint 的 react/no-children-prop 规则。这里明确禁用是为了让 asserts 集中
-// 在 markdown 行为本身，不被 lint 噪音稀释。
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { Markdown } from "../src/components/markdown/Markdown";
@@ -40,68 +36,12 @@ function assert(cond: unknown, msg: string): void {
   }
 }
 
-/**
- * 复刻实际 chat 流里的场景：assistant message 里包含一段带 ```py 的代码块。
- * 在 bug 版本里会渲染出 "[object Object], ,[object Object],..." 这种鬼东西。
- */
 function renderMarkdown(src: string): string {
   return renderToStaticMarkup(React.createElement(Markdown, { children: src }));
 }
 
 function main(): void {
-  // ─────────────── 1) CodeBlock：直接渲染 children（保留 hljs 高亮） ───────────────
-  console.log("=== CodeBlock: render children directly (preserve highlighting) ===");
-  {
-    const children = React.createElement(
-      React.Fragment,
-      null,
-      React.createElement(
-        "span",
-        { className: "hljs-keyword" },
-        "def"
-      ),
-      " ",
-      React.createElement(
-        "span",
-        { className: "hljs-title" },
-        "greet"
-      ),
-      "(",
-      React.createElement(
-        "span",
-        { className: "hljs-params" },
-        "name"
-      ),
-      "):\n    ",
-      React.createElement(
-        "span",
-        { className: "hljs-built_in" },
-        "print"
-      ),
-      '("hello")',
-    );
-
-    const html = renderToStaticMarkup(
-      React.createElement(CodeBlock, { language: "python", children }),
-    );
-
-    // 保留 hljs span
-    assert(
-      html.includes("hljs-keyword") && html.includes("def"),
-      "CodeBlock renders hljs-keyword span with text 'def'"
-    );
-    assert(
-      html.includes("hljs-built_in") && html.includes("print"),
-      "CodeBlock renders hljs-built_in span with text 'print'"
-    );
-    // 不能出现 "[object Object]"
-    assert(
-      !html.includes("[object Object]"),
-      "CodeBlock does NOT render '[object Object]' anywhere"
-    );
-  }
-
-  // ─────────────── 2) CodeBlock：value 路径仍然工作（ToolCallCard 依赖） ───────────────
+  // ─────────────── 1) CodeBlock：value 路径仍然工作（ToolCallCard 依赖） ───────────────
   console.log("=== CodeBlock: value path still works (backward compat) ===");
   {
     const html = renderToStaticMarkup(
@@ -110,27 +50,37 @@ function main(): void {
         value: '{"foo": "bar"}',
       }),
     );
-    // 服务端 renderToStaticMarkup 会把 " 转成 &quot;，两种都允许
-    const valueAppears =
-      html.includes('"foo": "bar"') ||
-      html.includes("foo") &&
-        html.includes("bar") &&
-        (html.includes("&quot;") || html.includes("foo"));
-    assert(valueAppears, "CodeBlock renders value content");
+    assert(html.includes("foo"), "CodeBlock renders value content");
     assert(!html.includes("[object Object]"), "CodeBlock value path has no [object Object]");
   }
 
-  // ─────────────── 3) CodeBlock：传 children 又传 value 时 children 优先 ───────────────
-  console.log("=== CodeBlock: children takes precedence over value ===");
+  // ─────────────── 2) CodeBlock：children string 路径（markdown 路径） ───────────────
+  console.log("=== CodeBlock: children (string) renders plain text ===");
+  {
+    const html = renderToStaticMarkup(
+      React.createElement(CodeBlock, {
+        language: "python",
+        children: 'def greet(name):\n    print("hello")',
+      }),
+    );
+    // SSR 阶段 worker 还没响应，所以渲染 plain text
+    assert(html.includes("def"), "CodeBlock renders text from children");
+    assert(html.includes("print"), "CodeBlock renders text content from children");
+    assert(!html.includes("[object Object]"), "CodeBlock children path has no [object Object]");
+  }
+
+  // ─────────────── 3) CodeBlock：value 优先（markdown 路径走 children，tool 走 value） ───────────────
+  console.log("=== CodeBlock: value precedence ===");
   {
     const html = renderToStaticMarkup(
       React.createElement(CodeBlock, {
         language: "text",
         value: "VALUE_STRING",
-        children: React.createElement("span", null, "CHILD_NODE"),
+        children: "CHILD_STRING",
       }),
     );
-    assert(html.includes("CHILD_NODE"), "CodeBlock renders children when both provided");
+    // 当前实现：markdown 路径用 children，tool 路径用 value；两者都传时 children 优先
+    assert(html.includes("CHILD_STRING"), "CodeBlock uses children when both provided");
     assert(!html.includes("VALUE_STRING"), "CodeBlock ignores value when children present");
   }
 
@@ -155,28 +105,16 @@ function main(): void {
       !html.includes("[object Object]"),
       "Markdown fenced code block does NOT contain '[object Object]'"
     );
-    // 实际代码内容必须保留下来
-    assert(
-      html.includes("def"),
-      "Markdown fenced code block still contains 'def'"
-    );
-    assert(
-      html.includes("print"),
-      "Markdown fenced code block still contains 'print'"
-    );
+    assert(html.includes("def"), "Markdown fenced code block still contains 'def'");
+    assert(html.includes("print"), "Markdown fenced code block still contains 'print'");
     assert(
       html.includes("Hello,"),
       "Markdown fenced code block still contains f-string content 'Hello,'"
     );
-    // 保留 hljs 高亮
+    // 高亮走 worker，SSR 阶段还没有 hljs- 类
     assert(
-      html.includes("hljs-keyword"),
-      "Markdown fenced code block preserves hljs-keyword span"
-    );
-    // 不应该出现原来的 [object Object] 痕迹
-    assert(
-      !/\[object Object\]/i.test(html),
-      "Markdown fenced code block has no '[object Object]' substring (case-insensitive)"
+      !html.includes("[object Object]"),
+      "Markdown fenced code block has no '[object Object]'"
     );
   }
 
@@ -186,7 +124,6 @@ function main(): void {
     const html = renderMarkdown("Use `npm install` to install.");
     assert(html.includes("npm install"), "Markdown inline code still renders text");
     assert(!html.includes("[object Object]"), "Markdown inline code has no [object Object]");
-    // inline code 用单独的 className 区分（不带 language-*）
     assert(
       html.includes("rounded bg-muted"),
       "Markdown inline code uses inline styling class"
@@ -203,27 +140,41 @@ function main(): void {
     assert(html.includes("Alice"), "JSON code block still contains 'Alice'");
   }
 
-  // ─────────────── 7) Markdown：未知语言 code block（detect 失败场景） ───────────────
+  // ─────────────── 7) Markdown：未知语言 code block ───────────────
   console.log("=== Markdown: unknown language code block ===");
   {
-    // 不写 ```xxx，纯 fenced code。rehype-highlight + detect: true 通常会强加一个
-    // language-* 类（auto-detect 把"plain text content"识别为 CSS）；但无论它
-    // 怎么分词，原始文本必须完整保留下来。
     const src = "```\nplain text content\n```";
     const html = renderMarkdown(src);
-    assert(
-      !html.includes("[object Object]"),
-      "Plain fenced code block has no [object Object]"
-    );
-    // 验证原始文本的所有字符都还在（hljs 可能切成 span，但不会丢字符）
+    assert(!html.includes("[object Object]"), "Plain fenced code block has no [object Object]");
     assert(
       html.includes("plain") && html.includes("text") && html.includes("content"),
       "Plain fenced code block preserves all words from original text"
     );
   }
 
+  // ─────────────── 8) Markdown：多 fenced block 互不干扰 ───────────────
+  console.log("=== Markdown: multiple fenced blocks ===");
+  {
+    const src = [
+      "```js",
+      "const x = 1;",
+      "```",
+      "",
+      "between",
+      "",
+      "```py",
+      "y = 2",
+      "```",
+    ].join("\n");
+    const html = renderMarkdown(src);
+    assert(html.includes("const x = 1"), "first block content preserved");
+    assert(html.includes("y = 2"), "second block content preserved");
+    assert(html.includes("between"), "prose between blocks preserved");
+    assert(!html.includes("[object Object]"), "no [object Object] in multi-block render");
+  }
+
   console.log(
-    `\n${failed === 0 ? "✅ all assertions passed" : `❌ ${failed} assertions failed`}`
+    `\n${failed === 0 ? "all assertions passed" : `${failed} assertions failed`}`
   );
   process.exit(failed === 0 ? 0 : 1);
 }

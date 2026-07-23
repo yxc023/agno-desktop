@@ -116,35 +116,31 @@ function main(): void {
 
   console.log("\n=== streaming, closed fence complete: prefix has the fence ===");
   {
-    // 已闭合的代码块 → prefix 走 Markdown，应能看到 hljs 高亮
+    // 已闭合的代码块 → prefix 走 Markdown，高亮走 Web Worker（async）；
+    // SSR 阶段还没拿到 worker 响应，所以只渲染 plain text。
     const html = render({
       text: "Intro.\n\n```js\nconsole.log('x');\n```\n\nAfter",
       streaming: true,
     });
-    // hljs 会把 `console`/`log`/`'x'` 拆到独立 span 里：`console</span>.<span>log</span>`
-    // 所以不能用 includes("console.log") 这种直接子串——断言拆开看。
     assert(html.includes("console"), "closed fence: 'console' preserved in prefix");
     assert(html.includes("log"), "closed fence: 'log' preserved in prefix");
-    assert(
-      html.includes("hljs-"),
-      "closed fence: hljs classes present in prefix"
-    );
     assert(html.includes("After"), "closed fence: tail contains 'After'");
+    // 高亮在 client worker 拿到响应后才出现，SSR 阶段没有 hljs-* 类；
+    // 这里只断言"SSR 没崩 + 内容完整"。
+    assert(!html.includes("[object Object]"), "closed fence: no [object Object]");
   }
 
   console.log("\n=== streaming equals false behaves identically to Markdown ===");
   {
-    // streaming=false 应当走完整的 Markdown 路径（含 hljs for closed fence 等）
+    // streaming=false 应当走完整的 Markdown 路径；高亮仍在 worker，SSR 阶段无 hljs-*
     const a = render({
       text: "Intro.\n\n```js\nconsole.log('x');\n```",
       streaming: false,
     });
     assert(a.includes("console"), "streaming=false: 'console' rendered");
     assert(a.includes("log"), "streaming=false: 'log' rendered");
-    assert(
-      a.includes("hljs-"),
-      "streaming=false: hljs classes present (full Markdown)"
-    );
+    // streaming=false 走完整 Markdown；高亮仍在 worker，SSR 阶段无 hljs-*
+    assert(!a.includes("[object Object]"), "streaming=false: no [object Object]");
     // streaming=false 不应有 cursor
     assert(
       !a.includes("streaming-cursor"),

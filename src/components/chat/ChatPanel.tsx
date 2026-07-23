@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   ArrowDown,
   Loader2,
@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { MessageBubble } from "./MessageBubble";
+import { VirtualMessageList } from "./VirtualMessageList";
 import { MessageInput } from "./MessageInput";
 import { ContextProgressBar } from "./ContextProgressBar";
 import { useChatStore, useCurrentSessionMessages, useLatestInputTokens, useLatestModelId } from "@/stores/chat-store";
@@ -37,6 +37,9 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { UserIdSetupDialog } from "@/components/common/UserIdSetupDialog";
+import { useAutoScroll } from "@/hooks/use-auto-scroll";
+import { useHashScroll, writeMessageHash } from "@/hooks/use-hash-scroll";
+import { clearAllShadows } from "@/lib/chat-buffer";
 
 const EXAMPLE_PROMPTS = [
   {
@@ -86,13 +89,45 @@ export function ChatPanel() {
   const userIdConfirmed = useSettingsStore((s) => s.userIdConfirmed);
   const [showUserIdSetup, setShowUserIdSetup] = useState(false);
 
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const [stickToBottom, setStickToBottom] = useState(true);
-  // stickToBottom 的最新值 via ref —— 让 ResizeObserver 回调（脱钩 React
-  // 渲染）始终读到最新值而不需把 stickToBottom 放依赖里（那会让 effect
-  // 在每次 onScroll 时重 attach）。
-  const stickToBottomRef = useRef(true);
-  stickToBottomRef.current = stickToBottom;
+  const {
+    scrollRef,
+    stickToBottom,
+    jumpToBottom,
+    pause: pauseAutoScroll,
+    onScroll,
+    onWheel,
+  } = useAutoScroll({ enabled: autoScroll });
+
+  const hashTargetId = useHashScroll();
+
+  /**
+   * 切换 active instance 时清掉所有 shadow map 残留——chunks 已不再属于
+   * 这个 instance 的 session 了；保留只会占 module-level Map 内存。
+   * (chat-buffer 模块级 shadow 是按 messageId 索引的，不带 instance 前缀。)
+   */
+  useEffect(() => {
+    return () => {
+      clearAllShadows();
+    };
+  }, [active?.id]);
+
+  /**
+   * Hash 深链 (URL 自带 #message-X，或 popstate / 用户在地址栏改 hash) active
+   * 时 pause autoScroll——避免 useAutoScroll 内的 ResizeObserver 在虚拟化器
+   * 内容变化时把视口拉回底部，覆盖 VirtualMessageList 的 scrollToIndex 跳转。
+   *
+   * "自写" hash（auto-tracking 滚动位置时调 writeMessageHash({ silent: true })）
+   * 不会更新 useHashScroll 的 target state，hashTargetId 保持不变 → 本 effect
+   * 不会重复触发 → autoscroll 正常工作。这是修"reload 后 autoscroll 失活"
+   * 这个 bug 的核心：之前两者都会设 hash → 一旦 auto-tracking 写入 hash，
+   * pause 就被永久锁住。
+   *
+   * Resume：用户点 "back to bottom" 按钮（jumpToBottom）或自然滚回底部
+   * （handleScroll: user-paused → sticky）都会重新激活 autoscroll。
+   */
+  useEffect(() => {
+    if (hashTargetId) pauseAutoScroll();
+  }, [hashTargetId, pauseAutoScroll]);
 
   // 进入 chat 页面时立即拉取 agents + sessions
   useEffect(() => {
@@ -116,49 +151,30 @@ export function ChatPanel() {
   }, [currentSessionId, active, loadedHistory, loadingHistory, loadHistory]);
 
   /**
-   * Autoscroll 通过 ResizeObserver 监听 scroll 容器尺寸变化触发，与
-   * `messages` 引用解耦 —— 之前把 `messages` 放 useEffect deps 里会让每次
-   * streaming chunk（每个 chunk 都让 messagesBySession 拿到新 ref）都重新
-   * 计算 scrollTop / scrollHeight（layout thrashing），叠加 markdown 重 parse
-   * → 用户描述的"持续输出时整体轻微抖动"+"快速上下滑时短暂空白"。
-   *
-   * 新策略：让浏览器自己告诉我们"内容高度变了"——靠 ResizeObserver 触发。
-   * 只在 stickToBottom + autoScroll 开启时才滚到底。
-   */
-  useEffect(() => {
-    if (!autoScroll) return;
-    const el = scrollRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver(() => {
-      if (!stickToBottomRef.current) return;
-      requestAnimationFrame(() => {
-        if (!stickToBottomRef.current) return;
-        const root = scrollRef.current;
-        if (!root) return;
-        root.scrollTo({ top: root.scrollHeight, behavior: "smooth" });
-      });
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [autoScroll]);
-
-  /**
-   * 兜底：切换 session / 第一次挂载 / 用户点 "back to bottom" 时也可能
-   * 没有 ResizeObserver 触发（scrollHeight 没变化），但仍要滚到底。
-   *
-   * 依赖里**故意**不放 `messages` —— 只在以下场景触发：
-   *   - currentSessionId 切换（用户换 session）
-   *   - loadedHistory 变化（历史消息刚刚加载完毕）
-   *
-   * streaming 期间的滚动完全交给上面的 ResizeObserver。
+   * 兜底：切换 session / 历史加载完毕时若没触发 RO（scrollHeight 未变）也滚到底。
+   * 依赖里不放 `messages` —— streaming 期间的滚动完全交给 useAutoScroll 内的 RO。
+   * 但如果有 hash 目标（深链 / scroll restoration），优先滚到 hash 而不是底。
    */
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
+    if (hashTargetId) return; // VirtualMessageList 的 scrollToMessageId effect 会处理
     requestAnimationFrame(() => {
       el.scrollTo({ top: el.scrollHeight });
     });
-  }, [currentSessionId, loadedHistory]);
+  }, [currentSessionId, loadedHistory, hashTargetId]);
+
+  /**
+   * 用户滚动 → topmost 可见 message 变化 → 写回 URL hash（debounced 150ms 由
+   * VirtualMessageList 内部完成）。这里只接 onActiveMessageChange → writeMessageHash。
+   */
+  const handleActiveMessageChange = useCallback((id: string | null) => {
+    if (!id) return;
+    // silent: true → useHashScroll 看到这次 hashchange 时不更新 target state，
+    // 避免 ChatPanel 的 pauseAutoScroll effect 因"自写 hash"被反复触发，
+    // 永久 disable autoscroll（之前 reload 后 autoscroll 失活的根因）。
+    writeMessageHash(id, { silent: true });
+  }, []);
 
   if (!active) {
     return null;
@@ -398,23 +414,27 @@ export function ChatPanel() {
       <div className="relative min-h-0 flex-1">
         <div
           ref={scrollRef}
-          onScroll={(e) => {
-            const el = e.currentTarget;
-            const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
-            setStickToBottom(dist < 80);
-          }}
+          onScroll={onScroll}
+          onWheel={onWheel}
           className="absolute inset-0 overflow-y-auto"
         >
           {currentSessionId && messages.length > 0 ? (
             <div className="mx-auto max-w-4xl py-6">
-              {messages.map((m, i) => (
-                <MessageBubble key={m.id} message={m} />
-              ))}
-              {loadingHistory && (
-                <div className="flex justify-center py-4">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
-                </div>
-              )}
+              {/* key={cacheKey} 让 session 切换时完整 remount：
+                   - virtualizer 重新构造，initialMeasurementsCache 从
+                     TimelineCache 命中（之前 cacheKey 变化但 hook 实例
+                     不变是死代码）
+                   - 内部 useRef / MutationObserver / RAF scheduler 都重新初始化
+                     跨 session 不残留状态 */}
+              <VirtualMessageList
+                key={currentSessionId}
+                messages={messages}
+                scrollRef={scrollRef}
+                loadingHistory={loadingHistory}
+                cacheKey={currentSessionId}
+                scrollToMessageId={hashTargetId ?? undefined}
+                onActiveMessageChange={handleActiveMessageChange}
+              />
             </div>
           ) : currentSessionId && (loadingHistory || !loadedHistory) ? (
             // 历史还没回来（或正在拉取）时显示 skeleton，
@@ -454,14 +474,7 @@ export function ChatPanel() {
           <Button
             variant="outline"
             size="icon-sm"
-            onClick={() => {
-              if (scrollRef.current) {
-                scrollRef.current.scrollTo({
-                  top: scrollRef.current.scrollHeight,
-                  behavior: "smooth",
-                });
-              }
-            }}
+            onClick={() => jumpToBottom(true)}
             className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full shadow-lg bg-card/95 backdrop-blur-sm border-border"
           >
             <ArrowDown className="h-3 w-3" />

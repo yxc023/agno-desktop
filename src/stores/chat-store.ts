@@ -16,6 +16,14 @@ import { useInstancesStore } from "./instances-store";
 import { useSessionsStore } from "./sessions-store";
 import { generateId } from "@/lib/utils";
 import type { AgChatMessage, AgRunResponse } from "@/lib/agno-types";
+import {
+  enqueueMessageUpdate,
+  takePending,
+  captureShadowFromMessage,
+  mergeShadowIntoMessage,
+  clearShadowForMessage,
+  setBufferFlushCallback,
+} from "@/lib/chat-buffer";
 
 function safeParse(s: string): any {
   try {
@@ -607,19 +615,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   setMessages: (sessionId, messages) =>
     set((s) => {
+      // Shadow merge：loadHistory 拉到的 snapshot 可能比当前 SSE 流的状态旧
+      // （AGNO 持久化的 runs[].events[] 不一定含全部 in-flight event）。
+      // 对每条 incoming message，用 shadow map 里的累积文本替换 text part
+      // （前提：shadow 是 incoming 的前缀 → SSE 已经走得更远）。
+      const mergedMessages = messages.map(mergeShadowIntoMessage);
       // 把目标 session 重新插入到 map 末尾（标记为最近访问），再做 LRU 收紧。
       const next: Record<string, ChatMessage[]> = {};
       for (const [k, v] of Object.entries(s.messagesBySession)) {
         if (k !== sessionId) next[k] = v;
       }
-      next[sessionId] = messages;
+      next[sessionId] = mergedMessages;
       // idIndex 同步：每个 setMessages 都重建一次（O(N) 单次扫描），
       // 之后 findInTree 退化为 O(1)。LRU 收紧时丢弃的 session 也丢弃 index。
       const newIndex: Record<string, Map<string, ChatMessage>> = {};
       for (const [k, v] of Object.entries(s.idIndexBySession)) {
         if (k !== sessionId) newIndex[k] = v;
       }
-      newIndex[sessionId] = buildIdIndex(messages);
+      newIndex[sessionId] = buildIdIndex(mergedMessages);
       const nextLoading: Record<string, boolean> = {};
       for (const [k, v] of Object.entries(s.loadingHistoryBySession)) {
         if (k !== sessionId) nextLoading[k] = v;
@@ -1667,10 +1680,26 @@ export const useChatStore = create<ChatState>((set, get) => ({
         if (latestModelId != null) break;
       }
 
+      // Race protection：如果当前 session 正在 streaming（ChatRunner
+      // 还在推 onMessageUpdate），不要用 loadHistory 的 snapshot 覆盖
+      // 内存里的消息——snapshot 可能比 SSE 流的状态旧（AGNO 持久化的
+      // runs[].events[] 不一定含全部 in-flight event）。
+      //
+      // 实际上 setMessages 内部已经做了 shadow merge（见 chat-buffer.ts），
+      // 会用 shadow 里累积的文本优先；这里再加 active-runner 检查作为兜底，
+      // 避免极端情况下 snapshot 比 shadow 还新（不太可能但安全）。
+      const runner = get().runner;
+      const runnerSession = runner?.getCurrentSessionId?.();
+      const runnerActive =
+        runner?.isRunning?.() && runnerSession === sessionId;
       // 如果自 fetch 开始后又有更新的 loadHistory 触发，跳过本轮的 setMessages
       // —— 后启动的请求会负责最终的 state 落地。
       if (loadHistoryGeneration.get(sessionId) === myGen) {
-        get().setMessages(sessionId, finalMessages);
+        if (!runnerActive) {
+          get().setMessages(sessionId, finalMessages);
+        }
+        // 不论 runner 是否 active，latest tokens / model id 仍可以更新
+        // （这两个字段是元数据，不参与 streaming 状态）。
         get().setLatestInputTokens(sessionId, latestInputTokens);
         get().setLatestModelId(sessionId, latestModelId);
       }
@@ -1735,25 +1764,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     const callbacks = {
       onMessageUpdate: (message: ChatMessage) => {
-        const list = get().messagesBySession[effectiveSessionId] ?? [];
-        const exists = !!findInTree(list, message.id);
-        if (!exists) {
-          // top-level 不存在（说明是新增或 sub）
-          if (message.parentMessageId) {
-            // sub message：找到 parent（沿树向下找）后 append
-            get().appendSubMessage(
-              effectiveSessionId,
-              message.parentMessageId,
-              message
-            );
-            return;
-          } else {
-            get().appendMessage(effectiveSessionId, message);
-            return;
-          }
-        }
-        // 已存在：原地更新
-        get().updateAnyMessage(effectiveSessionId, message.id, () => message);
+        // 高频 SSE event coalesce：把 message 加入 buffer（同 messageId 自动
+        // 合并为最新一条），microtask flush 时一次性写入 store。同一个 SSE
+        // burst 里 50 token 只产生 1 次 set()，而不是 50 次。
+        enqueueMessageUpdate(effectiveSessionId, message);
       },
       onModelRequestCompleted: (inputTokens: number, modelId: string | null) => {
         // AGNO 在每次 LLM 调用完成后发的 per-call token 数 + 真实 model id。
@@ -1807,9 +1821,37 @@ export const useChatStore = create<ChatState>((set, get) => ({
       onRunCompleted: () => {
         // 完成后刷新 session 列表
         useSessionsStore.getState().loadSessions(activeId, true);
+        // Shadow 已无意义——消息状态变 completed，下次 loadHistory 不会再
+        // 触发 merge。避免长期累积。
+        // 同时清理 sub-messages 的 shadow；team / multi-agent 场景下每个
+        // sub 也累计了 streaming 文本。
+        const finalMsg = runner.getCurrentMessage();
+        if (finalMsg) {
+          clearShadowForMessage(finalMsg.id);
+          if (finalMsg.subMessages) {
+            for (const sub of finalMsg.subMessages) {
+              clearShadowForMessage(sub.id);
+            }
+          }
+        }
       },
       onRunError: (runId: string, err: string) => {
         console.error("Run error", runId, err);
+        const finalMsg = runner.getCurrentMessage();
+        if (finalMsg) {
+          clearShadowForMessage(finalMsg.id);
+          if (finalMsg.subMessages) {
+            for (const sub of finalMsg.subMessages) {
+              clearShadowForMessage(sub.id);
+            }
+          }
+        }
+      },
+      onSubMessageFinalized: (parentMessageId: string, sub: ChatMessage) => {
+        // sub-agent run 完成（成功 / error / cancelled）— 清它的 shadow。
+        // 之前 onRunCompleted + onRunError 会清 top + 父 sub，但其他分支
+        // （HIL cancel-by-tool、sub 单独 error 等）下这条路径是唯一的 hook。
+        clearShadowForMessage(sub.id);
       },
       onRunPaused: () => {
         // pause 状态由 runner 内部状态驱动，UI 层会读取 awaitingInput
@@ -2003,3 +2045,75 @@ export function useLatestModelId(sessionId: string | null): string | null {
     return s.latestModelIdBySession[sessionId] ?? null;
   });
 }
+
+/* ------------------------------------------------------------------ */
+/* Coalesce buffer flush                                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * chat-buffer 的 flush 回调：把 pending 里每条 message 写入 store。
+ *
+ * 关键行为：
+ *   - flush 一次性把整个 pending 队列的更新合并到一个 `set(...)` 调用里，
+ *     50 token/s 的 SSE 只会让 React 重 render 1 次（microtask flush），
+ *     而不是 50 次。
+ *   - 每条 message 的写入路径由"当前 store 状态"决定（不存在 → append，
+ *     存在 → replace）。同一 messageId 多次 enqueue 在 flush 时只走最新一条。
+ *   - flush 时同时 captureShadowFromMessage()，把最新累积文本写进 shadow map；
+ *     loadHistory 的 setMessages 会用 shadow 覆盖较旧的 snapshot（避免
+ *     HTTP refetch 把 in-flight SSE 状态抹掉）。
+ */
+function applyBufferedUpdates(): void {
+  const entries = takePending();
+  if (entries.length === 0) return;
+  // 先把所有 message 的 shadow 捕获——不管最终走 append / update
+  for (const { message } of entries) {
+    captureShadowFromMessage(message);
+  }
+  // 把状态变更合并到一次 set()
+  // set / get 在 create() 闭包里；通过 store.getState() 取最新状态，
+  // 再用 store.setState 写。getState/setState 是 Zustand 标准 API。
+  const store = useChatStore;
+  store.setState((s) => {
+    const nextBySession = { ...s.messagesBySession };
+    const nextIndex = { ...s.idIndexBySession };
+    for (const { sessionId, message } of entries) {
+      const list = nextBySession[sessionId] ?? [];
+      const exists = findInTree(list, message.id);
+      let next: ChatMessage[];
+      if (!exists) {
+        if (message.parentMessageId) {
+          next = appendSubInTree(list, message.parentMessageId, message);
+        } else {
+          next = [...list, message];
+        }
+      } else {
+        next = replaceInTree(list, message.id, () => message);
+      }
+      nextBySession[sessionId] = next;
+      const idx = nextIndex[sessionId]
+        ? new Map(nextIndex[sessionId]!)
+        : new Map<string, ChatMessage>();
+      idx.set(message.id, message);
+      if (message.subMessages) {
+        for (const sub of message.subMessages) {
+          idx.set(sub.id, sub);
+        }
+      }
+      nextIndex[sessionId] = idx;
+    }
+    return {
+      messagesBySession: pruneMessagesBySession(
+        nextBySession,
+        MESSAGES_BY_SESSION_LRU_LIMIT
+      ),
+      idIndexBySession: pruneMessagesBySession(
+        nextIndex,
+        MESSAGES_BY_SESSION_LRU_LIMIT
+      ),
+    };
+  });
+}
+
+// 模块加载时立即注册 flush callback —— 整个进程只有一个 chat-store 实例。
+setBufferFlushCallback(applyBufferedUpdates);

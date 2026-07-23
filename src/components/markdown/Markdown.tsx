@@ -3,7 +3,6 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import rehypeRaw from "rehype-raw";
-import rehypeHighlight from "rehype-highlight";
 import { cn } from "@/lib/utils";
 import { CodeBlock } from "./CodeBlock";
 import { openExternalUrl } from "@/lib/open-external-url";
@@ -28,6 +27,16 @@ interface Props {
  *
  * 进一步优化：流式场景下应使用 `<MarkdownStream>` —— 它会把 markdown 切为
  * 「稳定 prefix」+「实时 tail」，让本组件在最坏情况也只重 parse 增量段落。
+ *
+ * ## 代码高亮
+ * Code block 的语法高亮走 Web Worker（见 `src/lib/highlight-client.ts` +
+ * `src/lib/highlight.worker.ts`）。Markdown 解析阶段**不做高亮**——只识别
+ * `language-*` 类，把原始文本交给 `<CodeBlock>`，后者在 effect 里发起
+ * worker 请求并用 `dangerouslySetInnerHTML` 替换。这样：
+ *   - 主线程不被长 code block 的 tokenize 阻塞；
+ *   - streaming 期间 unclosed fence 已经在 prefix/tail 拆分里整段走 tail，
+ *     不进 react-markdown → 更不会触发高亮；
+ *   - 历史回放：N 个 code block 并行发请求，主线程依旧响应滚动 / hover。
  */
 export const Markdown = memo(function Markdown({
   children,
@@ -54,30 +63,19 @@ export const Markdown = memo(function Markdown({
     >
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkBreaks]}
-        rehypePlugins={[rehypeRaw, [rehypeHighlight, { detect: true }]]}
+        rehypePlugins={[rehypeRaw]}
         components={{
           pre({ children }) {
-            // rehype-highlight 已经在 pre 里包裹了 code，
-            // 直接把 children 透传给我们的 code 渲染管线，避免多套一层无意义 fragment
             return <Fragment>{children}</Fragment>;
           },
           code({ className: cls, children, node: _node, ...props }) {
-            // 关键修复（修复前是 `String(children)`，会把 rehype-highlight 产生的
-            // `<span>` 元素数组序列化成 "[object Object],[object Object],..."，
-            // 导致代码块里出现一串 "[object Object]" 字样）。
-            //
             // 检测 block vs inline：用 className 里有没有 `language-*` 区分。
-            //   - 旧 `isInline = !props.node?.position` 永远为 false（两种 code 都
-            //     有 position），结果 inline 也走 CodeBlock 路径——只是因为 inline
-            //     的 children 是 string，`String("code")` 偶然没坏。
-            //   - rehype-highlight + `detect: true` 总会给 fenced block 加上
-            //     `language-xxx` 类（要么显式、要么自动识别），inline 永远没有。
-            //     所以 className 是最可靠的区分依据。
+            //   - inline 没有 `language-*` 类
+            //   - fenced block 总会有（要么显式 ```lang，要么被检测为 plaintext）
             const langMatch = /language-(\w+)/.exec(cls || "");
             const language = langMatch?.[1];
 
             if (!language) {
-              // inline code：直接渲染子节点（highlight.js 不处理 inline）
               return (
                 <code
                   className="px-1.5 py-0.5 rounded bg-muted text-foreground font-mono text-[0.85em]"
@@ -88,10 +86,11 @@ export const Markdown = memo(function Markdown({
               );
             }
 
-            // block code：把 children（已经是 hljs token span 树）原样传给 CodeBlock,
-            // 保留高亮。CodeBlock 自己会用 extractText(children) 拿到纯文本做"复制"。
+            // block code：提取原始文本 → 给 CodeBlock；
+            // 高亮在 worker 里做（见 CodeBlock.tsx + useHighlight）。
+            const rawText = stringifyChildren(children);
             return (
-              <CodeBlock language={language}>{children as ReactNode}</CodeBlock>
+              <CodeBlock language={language}>{rawText}</CodeBlock>
             );
           },
           a({ href, children }) {
@@ -129,3 +128,18 @@ export const Markdown = memo(function Markdown({
     </div>
   );
 });
+
+/**
+ * 把 react-markdown 传给 `code` 的 children 拍平成纯文本。
+ *
+ * 移除了 rehype-highlight 之后，children 就是原始 markdown 文本（数组
+ * 或单个字符串）；这里统一成字符串给 CodeBlock，CodeBlock 再交给 worker
+ * 高亮。
+ */
+function stringifyChildren(children: ReactNode): string {
+  if (children == null || typeof children === "boolean") return "";
+  if (typeof children === "string") return children;
+  if (typeof children === "number") return String(children);
+  if (Array.isArray(children)) return children.map(stringifyChildren).join("");
+  return "";
+}

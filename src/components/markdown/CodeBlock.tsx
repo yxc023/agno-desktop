@@ -1,80 +1,65 @@
-import {
-  Children,
-  isValidElement,
-  useCallback,
-  useMemo,
-  useState,
-  type ReactNode,
-} from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Check, Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn, copyToClipboard } from "@/lib/utils";
+import { useHighlight } from "@/hooks/use-highlight";
 
 interface Props {
   language?: string;
   /**
-   * 纯文本内容。Markdown 渲染路径下不要传——传 `children` 才能保留
-   * rehype-highlight 的 token spans。ToolCallCard / ApprovalDialog 这种
-   * 已经有 JSON.stringify 好的字符串的地方仍然用 `value`。
+   * Markdown 渲染路径：react-markdown 解析后的原始文本。
+   * CodeBlock 会在 Web Worker 里异步高亮；高亮未到之前显示纯文本。
+   */
+  children?: string;
+  /**
+   * 已 JSON.stringify 好的字符串（ToolCallCard / ApprovalDialog 等）。
+   * 这种情况下不调 worker，直接纯文本渲染（避免对 JSON 字符串做语法高亮）。
    */
   value?: string;
-  /**
-   * 由 react-markdown 经 rehype-highlight 处理后的 React 子树。
-   * 直接渲染可保留 `<span class="hljs-...">` 高亮。
-   */
-  children?: ReactNode;
   className?: string;
 }
 
 /**
- * 从 React 子树递归抽取纯文本。
+ * CodeBlock — 代码块容器。
  *
- * 解决 Markdown 渲染路径的 bug：rehype-highlight 会把 token 包成
- * `<span>` 元素，react-markdown 把它们作为 `children` 传给我们的 `code`
- * 组件；旧的 `String(children)` 会把数组里的 React element 序列化成
- * `[object Object],[object Object],...`，导致代码块里出现一串
- * "[object Object]" 字样。这里递归展开拿到原始文本用于「复制」。
+ * ## 高亮策略
+ * - Markdown 路径传 `children`（原始文本）→ useHighlight → worker → dangerouslySetInnerHTML
+ * - 工具卡片路径传 `value`（已 stringify 的 JSON）→ 不高亮，原文渲染
+ *
+ * 高亮未到达前显示 plain text；worker 通常 < 50ms 响应，所以视觉上几乎
+ * 看不到"无高亮"状态（除非 block 特别长）。
+ *
+ * Copy 按钮复制纯文本；markdown 路径从 children 拿，tool 卡片路径从 value 拿。
  */
-function extractText(node: ReactNode): string {
-  if (node == null || typeof node === "boolean") return "";
-  if (typeof node === "string" || typeof node === "number") {
-    return String(node);
-  }
-  if (Array.isArray(node)) {
-    return node.map(extractText).join("");
-  }
-  if (isValidElement(node)) {
-    const props = node.props as { children?: ReactNode };
-    return extractText(props.children);
-  }
-  // fragment / portal 之类
-  if (typeof node === "object" && "props" in (node as any)) {
-    return extractText((node as any).props?.children);
-  }
-  return "";
-}
-
-export function CodeBlock({ language, value, children, className }: Props) {
+export function CodeBlock({ language, children, value, className }: Props) {
   const [copied, setCopied] = useState(false);
 
-  // 复制用的纯文本：优先 value（已经是 string），否则从 children 递归抽取
-  const displayText = useMemo(() => {
-    if (typeof value === "string") return value;
-    return extractText(children);
-  }, [value, children]);
+  const rawText = children ?? value ?? "";
+  const isMarkdownPath = children !== undefined && value === undefined;
+
+  // worker 缓存 key —— 同一 (text, language) 跨 session 复用高亮结果
+  const cacheKey = useMemo(
+    () => `${language ?? "text"}:${rawText.length}:${hash32(rawText)}`,
+    [language, rawText]
+  );
+  const { html, status } = useHighlight(
+    rawText,
+    language ?? "",
+    cacheKey
+  );
 
   const onCopy = useCallback(async () => {
-    if (!displayText) return;
-    const ok = await copyToClipboard(displayText);
+    if (!rawText) return;
+    const ok = await copyToClipboard(rawText);
     if (ok) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     }
-  }, [displayText]);
+  }, [rawText]);
 
-  // 渲染内容：children 优先（保留高亮）；否则回落到 value 字符串
-  const hasChildren = Children.count(children) > 0;
-  const renderContent: ReactNode = hasChildren ? children : value ?? "";
+  // 高亮可用 → dangerouslySetInnerHTML；否则纯文本 fallback
+  const codeClass = `language-${language || "text"}`;
+  const isPending = isMarkdownPath && status === "pending" && html === null;
 
   return (
     <div
@@ -86,12 +71,15 @@ export function CodeBlock({ language, value, children, className }: Props) {
       <div className="flex items-center justify-between px-3 py-1.5 border-b border-white/5 bg-white/[0.02]">
         <span className="text-[11px] font-mono text-zinc-400 lowercase">
           {language || "text"}
+          {isPending && (
+            <span className="ml-2 text-zinc-500 italic">highlighting…</span>
+          )}
         </span>
         <Button
           variant="ghost"
           size="icon-sm"
           onClick={onCopy}
-          disabled={!displayText}
+          disabled={!rawText}
           className="h-6 w-6 text-zinc-400 hover:text-zinc-100 hover:bg-white/10 disabled:opacity-40"
         >
           {copied ? (
@@ -102,8 +90,25 @@ export function CodeBlock({ language, value, children, className }: Props) {
         </Button>
       </div>
       <pre className="overflow-x-auto p-3 text-[12.5px] leading-relaxed font-mono text-zinc-100">
-        <code className={`language-${language || "text"}`}>{renderContent}</code>
+        {html ? (
+          <code
+            className={codeClass}
+            dangerouslySetInnerHTML={{ __html: html }}
+          />
+        ) : (
+          <code className={codeClass}>{rawText}</code>
+        )}
       </pre>
     </div>
   );
+}
+
+/** 32-bit FNV-1a hash —— 缓存 key 用，不要用于安全场景。 */
+function hash32(s: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
 }

@@ -9,28 +9,17 @@
  *   - rehype-highlight 用 `detect: true` 对**未闭合**的代码块尝试识别语言
  *     并高亮 — 这是 streaming 阶段的纯浪费
  *
- * ## 策略
- * 把 streaming 文本切为两部分（详见 `markdown-stream.ts`）：
- *   - **prefix**：到「最后一个稳定段落/fence 边界」为止（含分隔符）
- *     → 用 `<Markdown>` 正常渲染
- *   - **tail**：prefix 之后的内容
- *     → 当作 plain text 渲染（在容器里加 streaming cursor 样式）
- *
- * 非 streaming 状态下，把整个文本当作 prefix 一次性渲染（行为不变）。
- *
- * ## 增量复用
- * 大多数 stream tick 只往 tail 里加几个字符：
- *   - prefix 不变 → React.memo 跳过 `<Markdown>` 渲染（关键优化）
- *   - 仅 tail 长度变化 → 极快（只是给 textContent 节点设置新值）
- *
- * 跨过段落边界时：
- *   - prefix 长度增加 1 个段落 → `<Markdown>` 重新解析（但只解析到 tail
- *     之前的内容，比原始的全量重 parse 仍省 1-2 个数量级的工作）
+ * ## 三层节流
+ *   1. **节流输入文本**：`usePacedValue` 把上游快速增长的值切成 ~24ms 的
+ *      节奏释放；snap 到最近的空白/标点，避免"半截 token"。非流式状态
+ *      （`streaming=false` 或历史回放）一次性同步，不延迟。
+ *   2. **prefix/tail 拆分**（详见 `markdown-stream.ts`）：流式文本切到
+ *      「最后一个稳定段落/fence 边界」为止；之前部分走完整 `<Markdown>`，
+ *      之后部分当作 plain text + streaming cursor。
+ *   3. **React.memo**：下游 `<Markdown>` / `<span>` 在 shown 不变时跳过 render。
  *
  * ## Tail 渲染
  * tail 不是 markdown，避免出现「半截 fence」/「半截 list」语法混入渲染。
- * 视觉上用一个稍暗的 tone + streaming cursor，让用户在视觉上「这块还在
- * stream」与 prefix 已完成的「干净 markdown」形成区分。
  *
  * ## 已知简化（先 ship，后续可优化）
  *   - tail 用 plain text（保留换行），不解析任何 markdown（避免 fence 半截）
@@ -47,6 +36,7 @@ import {
   splitStreamingMarkdown,
   shouldSkipSplit,
 } from "./markdown-stream";
+import { usePacedValue } from "@/hooks/use-paced-value";
 
 interface Props {
   /** 文本内容 */
@@ -69,21 +59,25 @@ export const MarkdownStream = memo(function MarkdownStream({
   streaming = false,
   className,
 }: Props) {
+  // 流式期间节流释放：每 ~24ms 推一段，snap 到空白/标点。
+  // 非流式（streaming=false 或历史回放）→ 一次性跟上，不延迟。
+  const pacedText = usePacedValue(
+    () => children ?? "",
+    { isLive: () => streaming === true }
+  );
+
   const split = useMemo(() => {
     if (!streaming) {
-      // 非流式：整段视为 prefix，tail 为空。一次渲染所有内容。
-      return { prefix: children ?? "", tail: "" };
+      return { prefix: pacedText ?? "", tail: "" };
     }
-    const text = children ?? "";
+    const text = pacedText ?? "";
     if (!text) return { prefix: "", tail: "" };
     if (shouldSkipSplit(text)) {
-      // link ref 存在 → 整段视为 tail（统一整段 plain text，避免错配）
       return { prefix: "", tail: text };
     }
     return splitStreamingMarkdown(text);
-  }, [children, streaming]);
+  }, [pacedText, streaming]);
 
-  // 非流式：直接走完整 Markdown 路径（保留 hljs 等全部能力）
   if (!streaming) {
     return (
       <Markdown className={className} streaming={false}>
@@ -92,7 +86,6 @@ export const MarkdownStream = memo(function MarkdownStream({
     );
   }
 
-  // 流式：tail 仍为空 → 整段都是 prefix，正常渲染即可（无 plain-text 尾巴）
   if (!split.tail) {
     return (
       <Markdown className={className} streaming={false}>
@@ -101,9 +94,6 @@ export const MarkdownStream = memo(function MarkdownStream({
     );
   }
 
-  // 流式 + 有 tail：
-  //   prefix 走 React.memo(Markdown) —— 文本不变就跳过；
-  //   tail 是 plain text，带 streaming cursor。
   return (
     <div className={cn("prose prose-sm dark:prose-invert max-w-none", className)}>
       {split.prefix && (
