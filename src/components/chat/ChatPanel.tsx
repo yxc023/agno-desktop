@@ -92,11 +92,22 @@ export function ChatPanel() {
     scrollRef,
     stickToBottom,
     jumpToBottom,
+    pause: pauseAutoScroll,
     onScroll,
     onWheel,
   } = useAutoScroll({ enabled: autoScroll });
 
   const hashTargetId = useHashScroll();
+
+  /**
+   * Hash 深链 active 时，强制 pause autoScroll——
+   * 避免 useAutoScroll 内的 ResizeObserver 在虚拟化器内容变化时把视口
+   * 拉回底部，覆盖我们 scrollToIndex 的跳转位置。
+   * 用户点 "back to bottom" 时 jumpToBottom 显式恢复，不影响。
+   */
+  useEffect(() => {
+    if (hashTargetId) pauseAutoScroll();
+  }, [hashTargetId, pauseAutoScroll]);
 
   // 进入 chat 页面时立即拉取 agents + sessions
   useEffect(() => {

@@ -113,17 +113,47 @@ export function VirtualMessageList({
   }, [cacheKey]);
 
   // hash 跳转：scrollToMessageId 变化时 scrollToIndex
+  //
+  // 多帧 rAF polling：TanStack 第一次 mount 后还要等 row 测量完才能
+  // 准确定位；如果消息很靠下（offscreen），第一次 scrollToIndex 走估计高度，
+  // 等 row 真正渲染后会跳一下。这里最多轮询 8 帧（≈135ms），找到 row
+  // 已渲染 + 已测量后再 scrollToIndex。
+  //
+  // scrolledRef 防止同 target 在 streaming 期间 messages 数组每次更新
+  // 时被重新滚动（effect deps 含 messages，会一直触发）。
+  const scrolledRef = useRef<string | null>(null);
   useEffect(() => {
     if (!scrollToMessageId) return;
+    if (scrolledRef.current === scrollToMessageId) return;
     const idx = messages.findIndex((m) => m.id === scrollToMessageId);
-    if (idx < 0) return;
-    // rAF 等一帧让 virtualizer 完成 measure / layout；避免首次挂载时 row
-    // 还没测量高度就被 scrollToIndex 拉到错误位置
-    const raf = requestAnimationFrame(() => {
-      virtualizer.scrollToIndex(idx, { align: "center", behavior: "smooth" });
-    });
+    if (idx < 0) return; // 消息还没加载回来，no-op；等下次 messages 更新
+
+    let frames = 0;
+    let raf = 0;
+    const targetId = scrollToMessageId;
+    function tryScroll() {
+      const root = scrollRef.current;
+      if (!root) return;
+      const row = root.querySelector<HTMLElement>(
+        `[data-message-id="${CSS.escape(targetId)}"]`
+      );
+      // row 已渲染 + 已测量（高度 > 0）→ scroll
+      if (row && row.offsetHeight > 0) {
+        virtualizer.scrollToIndex(idx, { align: "center", behavior: "smooth" });
+        scrolledRef.current = targetId;
+        return;
+      }
+      if (frames++ < 8) {
+        raf = requestAnimationFrame(tryScroll);
+      } else {
+        // 超时：兜底用估计高度 scrollToIndex
+        virtualizer.scrollToIndex(idx, { align: "center", behavior: "smooth" });
+        scrolledRef.current = targetId;
+      }
+    }
+    raf = requestAnimationFrame(tryScroll);
     return () => cancelAnimationFrame(raf);
-  }, [scrollToMessageId, messages, virtualizer]);
+  }, [scrollToMessageId, messages, virtualizer, scrollRef]);
 
   // topmost 可见 message 跟踪（debounced 150ms）
   useEffect(() => {
