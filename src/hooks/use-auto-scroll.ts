@@ -116,20 +116,43 @@ export function useAutoScroll(
     const el = scrollRef.current;
     if (!el) return;
 
-    const ro = new ResizeObserver(() => {
-      const c = controllerRef.current!;
-      if (!c.isSticky()) return;
-      requestAnimationFrame(() => {
-        if (!c.isSticky()) return;
-        const root = scrollRef.current;
-        if (!root) return;
-        c.jumpToBottom(Date.now());
-        root.scrollTop = root.scrollHeight;
-      });
-    });
+    // ResizeObserver 只看 scrollRef 自己的 box size；streaming 时内容
+    // scrollHeight 增长不触发 RO（外层 fixed-height 不变）。所以加一个
+    // MutationObserver 看子树：新增 row、style.height 改、class 变化都触发。
+    // lastScrollHeight 做 dedup —— scrollHeight 没变就跳过。
+    let lastScrollHeight = el.scrollHeight;
+    let pending = false;
+
+    const tick = () => {
+      pending = false;
+      const c = controllerRef.current;
+      if (!c || !c.isSticky()) return;
+      const root = scrollRef.current;
+      if (!root) return;
+      if (root.scrollHeight === lastScrollHeight) return;
+      lastScrollHeight = root.scrollHeight;
+      c.jumpToBottom(Date.now());
+      root.scrollTop = root.scrollHeight;
+    };
+    const schedule = () => {
+      if (pending) return;
+      pending = true;
+      requestAnimationFrame(tick);
+    };
+
+    const ro = new ResizeObserver(schedule);
     ro.observe(el);
+    const mo = new MutationObserver(schedule);
+    mo.observe(el, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["style", "class"],
+    });
+
     return () => {
       ro.disconnect();
+      mo.disconnect();
     };
   }, [enabled]);
 
