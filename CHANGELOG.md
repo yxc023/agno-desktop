@@ -2,6 +2,15 @@
 
 All notable changes to Agno Desktop are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **`useAutoScroll` hook** (`src/hooks/use-auto-scroll.ts`) — 取代 `ChatPanel.tsx` 里的内联 `ResizeObserver` + `onScroll` + `useRef` 状态机。背后是一个纯状态机类 `AutoScrollController` (`src/lib/auto-scroll-controller.ts`，三态：`sticky` / `user-paused` / `auto-snapping`)，30 条单元测试覆盖所有转移路径 + `markAuto` 窗口 + 嵌套 `[data-scrollable]` 滚轮过滤。修掉了之前 `behavior: "smooth"` 在 streaming 时被自己触发的 scroll 事件打断跟随的问题。
+
+### Fixed
+- **Chat autoscroll 现在跟得住长回复、不会"中途掉链"**。之前 `ChatPanel.tsx:128-143` 的 `ResizeObserver` + `behavior: "smooth"` 组合有两个隐藏问题：(1) `scrollTo({behavior: "smooth"})` 触发的 scroll 事件会被 `onScroll` 误判为"用户滚走了"——正在 streaming 时容器突然不再 auto-scroll；(2) 没设 `overflow-anchor`，浏览器原生 anchor 在 streaming 期间往下拽视图。新 hook 提供 `markAutoMs`（1500ms）窗口让自触发 scroll 不被误读，并在 `sticky` 时把容器 `overflow-anchor` 设为 `none` 让原生 anchor 别打架；同时支持 wheel 向上滚检测 + 嵌套 `[data-scrollable]` 滚轮过滤。
+- **Markdown 流式渲染现在按 ~24ms 节奏释放文本，而不是每 token 一次 React render**。新增 `usePacedValue` hook (`src/hooks/use-paced-value.ts`) + 纯逻辑类 `PacedValueController` (`src/lib/paced-value.ts`，20 条单元测试)。借鉴 OpenCode `createPacedValue`：短差异（≤512 字符）同步跟上；长差异每 24ms 推一段，chunk 大小按 remaining 自适应（256/128/64/16/4 阶梯），snap 到最近的空白/标点避免"半截 token"。`MarkdownStream.tsx` 现在用 `usePacedValue(() => children, { isLive: () => streaming })` 接管输入，配合已有的 `React.memo` 让 `<Markdown>` 在 paced text 不变时跳过整次 render。非流式（`streaming=false` 或历史回放）一次性同步跟上，零延迟。
+
 ## [0.0.8] - 2026-07-22
 
 ### Added
