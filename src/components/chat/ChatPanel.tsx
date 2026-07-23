@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   ArrowDown,
   Loader2,
@@ -38,6 +38,7 @@ import {
 import { cn } from "@/lib/utils";
 import { UserIdSetupDialog } from "@/components/common/UserIdSetupDialog";
 import { useAutoScroll } from "@/hooks/use-auto-scroll";
+import { useHashScroll, writeMessageHash } from "@/hooks/use-hash-scroll";
 
 const EXAMPLE_PROMPTS = [
   {
@@ -95,6 +96,8 @@ export function ChatPanel() {
     onWheel,
   } = useAutoScroll({ enabled: autoScroll });
 
+  const hashTargetId = useHashScroll();
+
   // 进入 chat 页面时立即拉取 agents + sessions
   useEffect(() => {
     if (!active) return;
@@ -119,14 +122,25 @@ export function ChatPanel() {
   /**
    * 兜底：切换 session / 历史加载完毕时若没触发 RO（scrollHeight 未变）也滚到底。
    * 依赖里不放 `messages` —— streaming 期间的滚动完全交给 useAutoScroll 内的 RO。
+   * 但如果有 hash 目标（深链 / scroll restoration），优先滚到 hash 而不是底。
    */
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
+    if (hashTargetId) return; // VirtualMessageList 的 scrollToMessageId effect 会处理
     requestAnimationFrame(() => {
       el.scrollTo({ top: el.scrollHeight });
     });
-  }, [currentSessionId, loadedHistory]);
+  }, [currentSessionId, loadedHistory, hashTargetId]);
+
+  /**
+   * 用户滚动 → topmost 可见 message 变化 → 写回 URL hash（debounced 150ms 由
+   * VirtualMessageList 内部完成）。这里只接 onActiveMessageChange → writeMessageHash。
+   */
+  const handleActiveMessageChange = useCallback((id: string | null) => {
+    if (!id) return;
+    writeMessageHash(id);
+  }, []);
 
   if (!active) {
     return null;
@@ -376,6 +390,9 @@ export function ChatPanel() {
                 messages={messages}
                 scrollRef={scrollRef}
                 loadingHistory={loadingHistory}
+                cacheKey={currentSessionId}
+                scrollToMessageId={hashTargetId ?? undefined}
+                onActiveMessageChange={handleActiveMessageChange}
               />
             </div>
           ) : currentSessionId && (loadingHistory || !loadedHistory) ? (
