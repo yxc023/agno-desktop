@@ -17,6 +17,8 @@ export interface AgnoInstance {
   baseUrl: string;
   token?: string | null;
   description?: string;
+  /** 该实例专属 user_id —— 不同实例可有不同身份；AGNO 用它归类 memory / session / user-level 数据 */
+  userId: string;
   /** 探活后缓存 */
   lastInfo?: AgInfoResponse | null;
   lastProbeAt?: number;
@@ -49,7 +51,13 @@ interface InstancesState {
 }
 
 function loadInstances(): AgnoInstance[] {
-  return loadJSON<AgnoInstance[]>(STORAGE_KEY, []);
+  const list = loadJSON<AgnoInstance[]>(STORAGE_KEY, []);
+  // 老数据无 userId 字段 → 当作未设置，触发 per-instance setup。
+  // 不在 loader 里硬塞默认值，避免覆盖用户后续的真实选择。
+  for (const inst of list) {
+    if (typeof inst.userId !== "string") inst.userId = "";
+  }
+  return list;
 }
 
 /**

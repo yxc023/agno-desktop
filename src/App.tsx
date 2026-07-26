@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { Toaster } from "sonner";
 import { AppShell } from "@/components/layout/AppShell";
@@ -7,25 +7,12 @@ import { InstancesPage } from "@/pages/InstancesPage";
 import { MemoryPage } from "@/pages/MemoryPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { NotFoundPage } from "@/pages/NotFoundPage";
-import { UserIdSetupDialog } from "@/components/common/UserIdSetupDialog";
 import { UpdateToast } from "@/components/common/UpdateToast";
-import { useSettingsStore } from "@/stores/settings-store";
 import { useEffectiveTheme } from "@/hooks/use-effective-theme";
 import { loadRemoteContextWindows } from "@/lib/model-context-windows";
 
 export default function App() {
-  const userId = useSettingsStore((s) => s.userId);
-  const userIdConfirmed = useSettingsStore((s) => s.userIdConfirmed);
   const resolved = useEffectiveTheme();
-  const [showSetup, setShowSetup] = useState(false);
-
-  useEffect(() => {
-    if (!userIdConfirmed || !userId.trim()) {
-      setShowSetup(true);
-    } else {
-      setShowSetup(false);
-    }
-  }, [userId, userIdConfirmed]);
 
   // 同步 resolved theme 到 <html class="dark">。
   // index.html 的同步脚本已经在首次加载时设置好了初值，这里处理后续切换。
@@ -67,11 +54,6 @@ export default function App() {
             description: "text-muted-foreground",
           },
         }}
-      />
-      <UserIdSetupDialog
-        open={showSetup}
-        onOpenChange={setShowSetup}
-        force={!userIdConfirmed || !userId.trim()}
       />
       <UpdateToast />
     </BrowserRouter>

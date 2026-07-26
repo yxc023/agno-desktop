@@ -1,12 +1,9 @@
 import { useActiveInstance } from "@/stores/instances-store";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Layers, Sparkles } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { useSettingsStore } from "@/stores/settings-store";
 
 export function MemoryPage() {
   const active = useActiveInstance();
-  const userId = useSettingsStore((s) => s.userId);
 
   if (!active) {
     return (
@@ -36,13 +33,17 @@ export function MemoryPage() {
               当前用户
             </CardTitle>
             <CardDescription>
-              设备级身份标识，所有实例共用
+              实例「{active.name}」使用的 user_id —— AGNO 用它归类该实例的 memory 和 user-level 数据
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="font-mono text-sm">{userId}</div>
+            {active.userId.trim() ? (
+              <div className="font-mono text-sm">{active.userId}</div>
+            ) : (
+              <div className="font-mono text-sm text-muted-foreground">未设置</div>
+            )}
             <p className="text-xs text-muted-foreground mt-2">
-              修改方式：设置 → 设备用户
+              修改方式：实例 → 编辑配置
             </p>
           </CardContent>
         </Card>

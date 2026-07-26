@@ -10,53 +10,65 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { User, Sparkles, KeyRound } from "lucide-react";
-import { useSettingsStore } from "@/stores/settings-store";
+import { User, Sparkles, KeyRound, Server } from "lucide-react";
+import { useInstancesStore } from "@/stores/instances-store";
+import { validateUserId } from "@/lib/user-id";
+
+/**
+ * user_id dialog 设计说明：
+ * - Enter 不触发提交，仅「保存」按钮可以关闭窗口。
+ *   原因：中文输入法下用户用回车把拼音上屏到 input 是高频操作，
+ *   拦截 Enter 会让 dialog 直接关闭，体验差。
+ * - IME composition 期间的回车由浏览器 / 输入法原生处理，我们
+ *   不拦截任何键，因此也不需要 shouldSendOnEnter 这类辅助判定。
+ */
 
 interface Props {
   open: boolean;
   onOpenChange: (v: boolean) => void;
+  /** 要编辑的实例 id —— 必填，setup 永远 per-instance */
+  instanceId: string;
   /** 强制模式：关不掉，必须设置 */
   force?: boolean;
+  /** dialog 标题里的实例名（可读性用） */
+  instanceName?: string;
 }
 
-export function UserIdSetupDialog({ open, onOpenChange, force = false }: Props) {
-  const userId = useSettingsStore((s) => s.userId);
-  const update = useSettingsStore((s) => s.update);
+export function UserIdSetupDialog({
+  open,
+  onOpenChange,
+  instanceId,
+  force = false,
+  instanceName,
+}: Props) {
+  const inst = useInstancesStore((s) =>
+    s.instances.find((i) => i.id === instanceId)
+  );
+  const updateInstance = useInstancesStore((s) => s.updateInstance);
 
-  const [value, setValue] = useState(userId);
+  const [value, setValue] = useState(inst?.userId ?? "");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (open) {
-      setValue(userId);
+      setValue(inst?.userId ?? "");
       setError(null);
     }
-  }, [open, userId]);
-
-  function validate(v: string): string | null {
-    const trimmed = v.trim();
-    if (!trimmed) return "user_id 不能为空";
-    if (trimmed.length < 2) return "至少 2 个字符";
-    if (trimmed.length > 64) return "最多 64 个字符";
-    if (!/^[a-zA-Z0-9_\-@.]+$/.test(trimmed)) {
-      return "只能包含字母、数字、下划线、连字符、@、点";
-    }
-    return null;
-  }
+  }, [open, inst?.userId]);
 
   function handleSave() {
-    const err = validate(value);
+    const trimmed = value.trim();
+    const err = validateUserId(trimmed);
     if (err) {
       setError(err);
       return;
     }
-    update({ userId: value.trim(), userIdConfirmed: true });
+    updateInstance(instanceId, { userId: trimmed });
     onOpenChange(false);
   }
 
   function handleSkip() {
-    if (force) return; // 强制模式不能跳
+    if (force) return;
     onOpenChange(false);
   }
 
@@ -64,7 +76,7 @@ export function UserIdSetupDialog({ open, onOpenChange, force = false }: Props) 
     <Dialog
       open={open}
       onOpenChange={(v) => {
-        if (!v && force) return; // 强制模式关不掉
+        if (!v && force) return;
         onOpenChange(v);
       }}
     >
@@ -81,12 +93,20 @@ export function UserIdSetupDialog({ open, onOpenChange, force = false }: Props) 
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <User className="h-4 w-4 text-accent" />
-            设置你的 user_id
+            设置该实例的 user_id
           </DialogTitle>
           <DialogDescription>
-            AGNO 用 user_id 来归类你的 memory、session 和 user-level 数据。
+            {instanceName ? (
+              <span className="flex items-center gap-1.5">
+                <Server className="h-3 w-3" />
+                实例「{instanceName}」
+              </span>
+            ) : (
+              "为这个 AGNO 实例设置一个身份。"
+            )}
             <br />
-            同一台设备上多实例共用一个 user_id。
+            AGNO 用 user_id 来归类 memory、session 和 user-level 数据。
+            不同实例可以用不同的 user_id（例如 dev / staging / prod）。
           </DialogDescription>
         </DialogHeader>
 
@@ -108,9 +128,10 @@ export function UserIdSetupDialog({ open, onOpenChange, force = false }: Props) 
               placeholder="例如: mike, michael@team, mike.li"
               className="font-mono"
               autoFocus
-              onKeyDown={(e) => {
-                if (e.key === "Enter") handleSave();
-              }}
+              spellCheck={false}
+              autoCorrect="off"
+              autoCapitalize="off"
+              autoComplete="off"
             />
             {error && (
               <p className="font-mono text-[11px] text-destructive">{error}</p>
@@ -138,7 +159,7 @@ export function UserIdSetupDialog({ open, onOpenChange, force = false }: Props) 
           <div className="flex items-center gap-2 rounded-md border border-accent/30 bg-accent/[0.04] px-3 py-2 font-mono text-[10.5px] text-muted-foreground">
             <Sparkles className="h-3 w-3 text-accent shrink-0" />
             <span>
-              设置后可在 <span className="text-foreground">设置</span> 页随时修改
+              设置后可在 <span className="text-foreground">实例 → 编辑</span> 页随时修改
             </span>
           </div>
         </div>

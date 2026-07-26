@@ -14,7 +14,7 @@
 
 | AGNO 端点 | 前端调用 | 实现位置 | 备注 |
 |-----------|----------|----------|------|
-| `GET /sessions` | `loadSessions` | `sessions-store.ts:loadSessions` | 支持 type/component_id/user_id/limit |
+| `GET /sessions` | `loadSessions` | `sessions-store.ts:loadSessions` | 支持 type/component_id/user_id/limit；按 instance.userId 过滤 |
 | `POST /sessions` | (未用，预留) | - | 显式创建 session |
 | `GET /sessions/{id}` | `loadHistory` | `chat-store.ts:loadHistory` | 加载 chat_history |
 | `DELETE /sessions/{id}` | `removeSession` | `sessions-store.ts:removeSession` | 删除 |
