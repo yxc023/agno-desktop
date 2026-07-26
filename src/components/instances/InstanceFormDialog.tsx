@@ -11,8 +11,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useInstancesStore, type AgnoInstance } from "@/stores/instances-store";
-import { Loader2, CheckCircle2, XCircle, Terminal, AlertCircle } from "lucide-react";
+import { Loader2, CheckCircle2, XCircle, Terminal, AlertCircle, User } from "lucide-react";
 import { Textarea } from "@/components/ui/input";
+import { validateUserId } from "@/lib/user-id";
 
 interface Props {
   open: boolean;
@@ -30,6 +31,8 @@ export function InstanceFormDialog({ open, instance, onOpenChange, onSuccess }: 
   const [name, setName] = useState(instance?.name ?? "");
   const [baseUrl, setBaseUrl] = useState(instance?.baseUrl ?? "");
   const [token, setToken] = useState(instance?.token ?? "");
+  const [userId, setUserId] = useState(instance?.userId ?? "");
+  const [userIdError, setUserIdError] = useState<string | null>(null);
   const [description, setDescription] = useState(instance?.description ?? "");
   const [probing, setProbing] = useState(false);
   const [probeResult, setProbeResult] = useState<{
@@ -45,6 +48,8 @@ export function InstanceFormDialog({ open, instance, onOpenChange, onSuccess }: 
       setName(instance?.name ?? "");
       setBaseUrl(instance?.baseUrl ?? "");
       setToken(instance?.token ?? "");
+      setUserId(instance?.userId ?? "");
+      setUserIdError(null);
       setDescription(instance?.description ?? "");
       setProbeResult(null);
     }
@@ -76,11 +81,18 @@ export function InstanceFormDialog({ open, instance, onOpenChange, onSuccess }: 
 
   function handleSubmit() {
     if (!name.trim() || !baseUrl.trim()) return;
+    const uid = userId.trim();
+    const err = validateUserId(uid);
+    if (err) {
+      setUserIdError(err);
+      return;
+    }
     if (isEdit && instance) {
       updateInstance(instance.id, {
         name: name.trim(),
         baseUrl: baseUrl.trim().replace(/\/+$/, ""),
         token: token || null,
+        userId: uid,
         description: description.trim(),
       });
       probe(instance.id);
@@ -91,6 +103,7 @@ export function InstanceFormDialog({ open, instance, onOpenChange, onSuccess }: 
         name: name.trim(),
         baseUrl: baseUrl.trim().replace(/\/+$/, ""),
         token: token || null,
+        userId: uid,
         description: description.trim(),
       });
       probe(inst.id);
@@ -108,7 +121,7 @@ export function InstanceFormDialog({ open, instance, onOpenChange, onSuccess }: 
             {isEdit ? "编辑实例" : "添加 AGNO 实例"}
           </DialogTitle>
           <DialogDescription>
-            输入 AGNO AgentOS 的 base URL。保存后会自动探活。
+            输入 AGNO AgentOS 的 base URL 和 user_id。保存后会自动探活。
           </DialogDescription>
         </DialogHeader>
 
@@ -165,6 +178,40 @@ export function InstanceFormDialog({ open, instance, onOpenChange, onSuccess }: 
                   <code className="text-foreground"> Access-Control-Allow-Origin </code>
                   头；本地开发可用 <code className="text-accent">/api</code> 走代理。
                 </div>
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-1.5">
+            <Label
+              htmlFor="userId"
+              className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground"
+            >
+              user_id <span className="text-destructive">*</span>
+            </Label>
+            <Input
+              id="userId"
+              value={userId}
+              onChange={(e) => {
+                setUserId(e.target.value);
+                setUserIdError(null);
+              }}
+              placeholder="例如: mike, michael@team, mike.li"
+              className="font-mono"
+              autoComplete="off"
+              spellCheck={false}
+              autoCorrect="off"
+              autoCapitalize="off"
+            />
+            {userIdError ? (
+              <p className="font-mono text-[11px] text-destructive">{userIdError}</p>
+            ) : (
+              <div className="flex items-start gap-1.5 font-mono text-[10.5px] text-muted-foreground">
+                <User className="h-3 w-3 mt-0.5 shrink-0" />
+                <span className="leading-relaxed">
+                  AGNO 用此 user_id 归类该实例的 memory、session 和 user-level 数据。
+                  不同实例可以用不同身份（如 dev/staging/prod）。
+                </span>
               </div>
             )}
           </div>
@@ -237,7 +284,7 @@ export function InstanceFormDialog({ open, instance, onOpenChange, onSuccess }: 
           </Button>
           <Button
             onClick={handleSubmit}
-            disabled={!name.trim() || !baseUrl.trim()}
+            disabled={!name.trim() || !baseUrl.trim() || !userId.trim()}
           >
             {isEdit ? "保存" : "添加"}
           </Button>

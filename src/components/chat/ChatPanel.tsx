@@ -85,8 +85,6 @@ export function ChatPanel() {
   const sendMessage = useChatStore((s) => s.sendMessage);
   const runner = useChatStore((s) => s.runner);
   const autoScroll = useSettingsStore((s) => s.autoScroll);
-  const userId = useSettingsStore((s) => s.userId);
-  const userIdConfirmed = useSettingsStore((s) => s.userIdConfirmed);
   const [showUserIdSetup, setShowUserIdSetup] = useState(false);
 
   const {
@@ -182,7 +180,8 @@ export function ChatPanel() {
 
   const isRunning = runner?.isRunning() ?? false;
   const agentsError = active.lastAgentsError;
-  const needUserId = !userId.trim() || !userIdConfirmed;
+  const userId = active.userId;
+  const needUserId = !userId.trim();
   // 当前选中的 agent（用来读 model id → 查 context window）
   const selectedAgent =
     agents.find((a) => a.id === selectedAgentId) ?? agents[0] ?? null;
@@ -488,6 +487,9 @@ export function ChatPanel() {
       <UserIdSetupDialog
         open={showUserIdSetup}
         onOpenChange={setShowUserIdSetup}
+        instanceId={active.id}
+        instanceName={active.name}
+        force={needUserId}
       />
     </div>
   );

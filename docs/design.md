@@ -164,10 +164,10 @@ for await (event of stream):
 
 | Store | 职责 | 持久化 |
 |-------|------|--------|
-| `instancesStore` | AGNO 实例 CRUD + AgnoClient 缓存 | localStorage |
+| `instancesStore` | AGNO 实例 CRUD（含 per-instance `userId`）+ AgnoClient 缓存 | localStorage |
 | `sessionsStore` | 每个实例的 session 列表 | 内存（每次重启重拉） |
 | `chatStore` | 当前 session 消息 + ChatRunner | 内存 |
-| `settingsStore` | 用户偏好 | localStorage |
+| `settingsStore` | 用户偏好（主题 / 滚动 / 自动更新等；不含 userId） | localStorage |
 
 **设计原则**：
 - 每个 store 职责单一，避免互相引用
@@ -181,6 +181,7 @@ for await (event of stream):
 2. **sessionId 唯一标识**：所有消息按 sessionId 索引
 3. **ChatRunner 唯一**：一次只有一个 runner 实例，abort 后再创建
 4. **localStorage 仅存轻量数据**：实例配置、用户偏好；不存消息内容（避免大体积）
+5. **user_id per-instance**：`AgnoInstance.userId` 是该实例的身份，**不同实例可有不同 user_id**。AGNO 用它归类该实例的 memory / session / user-level 数据。聊天时 `chat-store.sendMessage` 把 `active.userId` 透传给 `ChatRunner.run`，最终写到 `POST /agents/{id}/runs` 的 `user_id` 字段；拉历史 session 列表时 `sessions-store.loadSessions` 把 `inst.userId` 作为 `user_id` query 透传给 `GET /sessions?user_id=...`，并在客户端做一次 defensive 过滤（服务端不严格过滤时仍能隔离）。`sessionsUserId[instanceId]` 隐式作为缓存 key 的一部分——实例的 userId 一变就自动 force reload，不需要调用方显式 invalidate。dev / staging / prod 不同实例的对话、记忆自然隔离。
 
 ## 6. SSE 处理细节
 

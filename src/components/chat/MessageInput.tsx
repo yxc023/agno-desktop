@@ -5,7 +5,7 @@ import { Textarea } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { shouldSendOnEnter } from "@/lib/ime-composing";
 import { useChatStore } from "@/stores/chat-store";
-import { useSettingsStore } from "@/stores/settings-store";
+import { useActiveInstance } from "@/stores/instances-store";
 import { UserIdSetupDialog } from "@/components/common/UserIdSetupDialog";
 
 export function MessageInput() {
@@ -31,9 +31,9 @@ export function MessageInput() {
   //   等边界情况。
   const composingRef = useRef(false);
 
-  const userId = useSettingsStore((s) => s.userId);
-  const userIdConfirmed = useSettingsStore((s) => s.userIdConfirmed);
-  const needUserId = !userId.trim() || !userIdConfirmed;
+  const active = useActiveInstance();
+  const userId = active?.userId ?? "";
+  const needUserId = !userId.trim() || !active;
 
   // 自适应高度
   useEffect(() => {
@@ -211,10 +211,15 @@ export function MessageInput() {
         </div>
       </div>
 
-      <UserIdSetupDialog
-        open={showUserIdSetup}
-        onOpenChange={setShowUserIdSetup}
-      />
+      {active && (
+        <UserIdSetupDialog
+          open={showUserIdSetup}
+          onOpenChange={setShowUserIdSetup}
+          instanceId={active.id}
+          instanceName={active.name}
+          force={needUserId}
+        />
+      )}
     </div>
   );
 }

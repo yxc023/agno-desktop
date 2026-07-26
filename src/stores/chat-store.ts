@@ -1732,13 +1732,26 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (!activeId) throw new Error("No active instance");
     const client = instances.getClient(activeId);
     if (!client) throw new Error("No client");
+    const activeInst = instances.instances.find((i) => i.id === activeId);
+    const effectiveUserId = activeInst?.userId?.trim() ?? "";
+    if (!effectiveUserId) {
+      throw new Error("未设置该实例的 user_id，无法发送消息");
+    }
 
     const targetAgentId =
       agentId ?? get().selectedAgentId ?? instances.instances.find((i) => i.id === activeId)?.agents?.[0]?.id;
     if (!targetAgentId) throw new Error("No agent selected");
 
-    const targetSessionId =
+    let targetSessionId =
       sessionId ?? useSessionsStore.getState().currentSessionId ?? null;
+
+    // 没 currentSessionId 时兜底生成 UUID（用户没点 newSession 就直接发消息的情况，
+    // 例如 ChatEmptyState 的 prompt 按钮）。AGNO 会用这个 id 创建 session 并
+    // 原样返回。
+    if (!targetSessionId) {
+      targetSessionId = crypto.randomUUID();
+      useSessionsStore.getState().setCurrentSession(targetSessionId);
+    }
 
     const userMsg: ChatMessage = {
       id: generateId(),
@@ -1750,14 +1763,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       agentId: targetAgentId,
     };
 
-    const effectiveSessionId = targetSessionId ?? `pending-${Date.now()}`;
+    const effectiveSessionId = targetSessionId;
 
     get().appendMessage(effectiveSessionId, userMsg);
-
-    // 首次消息时把 currentSessionId 切到这个新 session
-    if (!targetSessionId) {
-      useSessionsStore.getState().setCurrentSession(effectiveSessionId);
-    }
 
     const runner = new ChatRunner();
     set({ runner, selectedAgentId: targetAgentId });
@@ -1794,18 +1802,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
       },
       onRunStarted: (runId: string, sid?: string) => {
-        if (sid && !targetSessionId) {
-          // 把 effectiveSessionId 替换为真实 id，并迁移消息
-          const oldKey = effectiveSessionId;
-          const newKey = sid;
-          const oldList = get().messagesBySession[oldKey] ?? [];
-          set((s) => {
-            const { [oldKey]: _, ...rest } = s.messagesBySession;
-            return {
-              messagesBySession: { ...rest, [newKey]: oldList },
-            };
-          });
-          useSessionsStore.getState().setCurrentSession(newKey);
+        // AGNO 用我们传入的 session_id 作 session id 并原样返回（参见 AGNO 行为），
+        // 所以 sid === targetSessionId === effectiveSessionId，不需要做 key 迁移。
+        // 只需把 session 推到本地列表 —— 让 sidebar 在 streaming 期间就显示这条 session，
+        // 而不是等 onRunCompleted → loadSessions 之后才出现。
+        //
+        // 注意：不写 last_message_preview —— streaming 期间我们没有 assistant 的真实回复，
+        // 用 user 第一句话做 preview 会误导（看着像在 preview 用户消息）。
+        // 不写这个字段后 SessionItem 的 preview 会 fallback 到 "Agent: ${agent_id}"，
+        // 至少能正确反映这条 session 是哪个 agent 在跑。
+        if (sid) {
           useSessionsStore
             .getState()
             .upsertSession(activeId, {
@@ -1814,7 +1820,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
               agent_id: targetAgentId,
               created_at: Math.floor(Date.now() / 1000),
               updated_at: Math.floor(Date.now() / 1000),
-              last_message_preview: text.slice(0, 100),
             } as any);
         }
       },
@@ -1864,7 +1869,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         agentId: targetAgentId,
         message: text,
         sessionId: targetSessionId,
-        userId: null,
+        userId: effectiveUserId,
         files,
       },
       callbacks
@@ -1929,6 +1934,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (!runId || !agentId || !activeId) return;
     const client = useInstancesStore.getState().getClient(activeId);
     if (!client) return;
+    const activeInst = useInstancesStore
+      .getState()
+      .instances.find((i) => i.id === activeId);
+    const effectiveUserId = activeInst?.userId?.trim() ?? "";
+    if (!effectiveUserId) return;
 
     const currentMessage = runner.getCurrentMessage();
     const callbacks = {
@@ -1955,7 +1965,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         agentId,
         runId,
         sessionId,
-        userId: null,
+        userId: effectiveUserId,
         toolResults,
       },
       callbacks
@@ -1963,7 +1973,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   newSession: (agentId) => {
-    const id = `local-${Date.now()}`;
+    // 用 UUID 作 placeholder —— AGNO 在收到 POST /agents/{id}/runs 的 session_id
+    // 后会以这个 id 创建 session 并原样返回（参见 AGNO 行为约定），所以这个 UUID
+    // 既作为本地 key，也是最终服务端 session id。后续 sendMessage 不需要任何
+    // placeholder → real-id 迁移逻辑。
+    const id = crypto.randomUUID();
     useSessionsStore.getState().setCurrentSession(id);
     if (agentId) get().setSelectedAgent(agentId);
     return id;

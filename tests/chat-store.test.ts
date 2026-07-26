@@ -621,6 +621,113 @@ async function testStaleLoadHistory() {
   assert(notSlow, "slow reply NOT present (stale generation no-op)");
 }
 
+// ─────────── 10) sendMessage 让 sidebar 在 streaming 期间就显示新 session ───────────
+async function testSendMessageUpsertsSessionDuringStreaming() {
+  console.log("=== sendMessage: onRunStarted upsert session 让 sidebar 即时显示 ===");
+  resetStores();
+
+  const upsertCalls: any[] = [];
+  // 让 listSessions 返回 upsert 过的 session —— onRunCompleted → loadSessions
+  // 会用服务端响应覆盖本地缓存，这样测试结束时本地列表仍然有这条 session。
+  let serverSideSession: any = null;
+
+  useInstancesStore.setState({
+    activeInstanceId: "inst-up",
+    instances: [
+      {
+        id: "inst-up",
+        name: "test",
+        baseUrl: "http://localhost:0",
+        userId: "mike",
+        agents: [{ id: "agent-up", name: "agent-up" } as any],
+        agentsFetchedAt: Date.now(),
+      } as any,
+    ],
+    getClient: ((_id: string) => ({
+      runAgent: async function* (
+        agentId: string,
+        body: any,
+        _signal: any
+      ): AsyncGenerator<{ event: string; data: string }> {
+        // 模拟 AGNO：传什么 session_id 就用什么 —— 这里返回我们传进去的 id。
+        yield {
+          event: "RunStarted",
+          data: JSON.stringify({
+            event: "RunStarted",
+            run_id: "run-up-1",
+            session_id: body.session_id,
+            agent_id: agentId,
+            status: "RUNNING",
+          }),
+        };
+        // 不 yield 更多事件 —— 让测试有机会在 onRunStarted 触发后立刻断言
+        // upsertSession 已被调用（在 onRunCompleted 之前）
+      },
+      continueAgentRun: async function* () {},
+      resumeAgentRun: async function* () {},
+      listSessions: async () => ({
+        data: serverSideSession ? [serverSideSession] : [],
+        meta: {
+          limit: 15,
+          page: 1,
+          total_count: serverSideSession ? 1 : 0,
+          total_pages: 1,
+        },
+      }),
+    })) as any,
+  });
+
+  // 拦截 upsertSession：记录调用、把 serverSideSession 也同步更新
+  const origUpsert = useSessionsStore.getState().upsertSession;
+  useSessionsStore.setState({
+    upsertSession: (instanceId, session) => {
+      upsertCalls.push({ instanceId, session });
+      origUpsert(instanceId, session);
+      serverSideSession = { ...session, user_id: "mike" };
+    },
+  });
+
+  // 用户点「新建」 → currentSessionId = UUID
+  useChatStore.getState().newSession();
+  const sidBeforeSend = useSessionsStore.getState().currentSessionId;
+  assert(
+    sidBeforeSend !== null && sidBeforeSend.length > 0,
+    "newSession 后 currentSessionId 是非空字符串"
+  );
+  assert(
+    !sidBeforeSend!.startsWith("local-"),
+    "currentSessionId 不再是 'local-' 前缀（用 UUID）"
+  );
+  // UUID 格式：8-4-4-4-12
+  assert(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      sidBeforeSend!
+    ),
+    "currentSessionId 是 UUID 格式"
+  );
+
+  await useChatStore
+    .getState()
+    .sendMessage({ text: "hi", sessionId: undefined, agentId: undefined });
+
+  // upsertSession 至少被调一次（onRunStarted 触发时）
+  assert(upsertCalls.length >= 1, "upsertSession 被 onRunStarted 调用");
+  // 第一次 upsert 的 session_id === 我们生成的 UUID
+  eq(
+    upsertCalls[0]?.session?.session_id,
+    sidBeforeSend,
+    "upsertSession 写入的 session_id === newSession 生成的 UUID"
+  );
+  // 写到正确的 instance
+  eq(upsertCalls[0]?.instanceId, "inst-up", "upsertSession 写入正确的 instance");
+
+  // 本地列表里有这条 session —— 即使 onRunCompleted → loadSessions 之后仍然在
+  // （listSessions mock 返回 serverSideSession，不会清空）
+  const list = useSessionsStore.getState().byInstance["inst-up"] ?? [];
+  eq(list.length, 1, "本地列表有 1 条 session");
+  eq(list[0]?.session_id, sidBeforeSend, "列表里 session_id === UUID");
+}
+
 // ─────────── main ───────────
 async function main(): Promise<void> {
   testReplaceInTreeSameRef();
@@ -632,6 +739,7 @@ async function main(): Promise<void> {
   await testPerSessionLoading();
   await testLoadHistoryError();
   await testStaleLoadHistory();
+  await testSendMessageUpsertsSessionDuringStreaming();
   console.log("");
   if (failed > 0) {
     console.log(`❌ ${failed} assertions failed`);

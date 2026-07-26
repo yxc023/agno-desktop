@@ -2,6 +2,27 @@
 
 All notable changes to Agno Desktop are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+## [0.0.10] - 2026-07-26
+
+### Changed
+- **`user_id` is now per-instance.** Previously a single global `userId` lived in `settings-store` and was shared by every AGNO instance — meaning your dev / staging / prod sessions all landed under the same identity on each backend. Now each `AgnoInstance` carries its own `userId: string` (`src/stores/instances-store.ts:23`); the legacy `settings.userId` / `userIdConfirmed` / `hasUserId` are removed from `settings-store`. The `InstanceFormDialog` makes `user_id` a required field at add / edit time (`src/components/instances/InstanceFormDialog.tsx:103`), and `UserIdSetupDialog` becomes a per-instance dialog (`src/components/common/UserIdSetupDialog.tsx`) — title now reads "设置该实例的 user_id" with the instance name attached, and saves go to `instancesStore.updateInstance(instanceId, { userId })` instead of global settings. `ChatPanel` / `MessageInput` / `MemoryPage` all read `active.userId`; `SettingsPage` drops its global editor and points users to the instance-edit path.
+- **Session list is filtered by the active instance's `user_id`.** `sessions-store.loadSessions` / `loadMoreSessions` now pass `inst.userId` to `client.listSessions({ user_id, ... })` so the sidebar only shows the active identity's sessions (`src/stores/sessions-store.ts:95` / `:146`). Defense in depth: a client-side filter (`filterByUserId`) drops anything the server returns with a different `user_id` — older AGNO versions that don't strictly filter by `user_id` no longer leak other users' sessions into the list. Cache key is implicit: `sessionsUserId[instanceId]` tracks the `userId` the cache was populated under, so changing the instance's `userId` (in `InstanceFormDialog`) auto-invalidates on the next `loadSessions` — no explicit `clearSessionsCache` needed. A `clearSessionsCache(instanceId)` escape hatch is exposed for completeness.
+- **`newSession` uses a local UUID placeholder.** AGNO accepts and reuses whatever `session_id` we pass in `POST /agents/{id}/runs`, so `crypto.randomUUID()` doubles as both the local message-store key and the server-side session id — `onRunStarted` no longer needs key migration logic, just `upsertSession` so the sidebar shows the new session during streaming (`src/stores/chat-store.ts:1729`).
+- **`UserIdSetupDialog` no longer triggers on Enter inside the input.** Previously a Chinese IME committing pinyin via Enter would dismiss the dialog mid-IME and silently lose the user's intent. The handler is removed entirely — only the explicit 「保存」 button closes the dialog.
+
+### Fixed
+- **`userId` was never actually sent to AGNO.** `chat-store.sendMessage` had `userId: null` hardcoded (`src/stores/chat-store.ts:1867`), and `continueRun` had the same (`src/stores/chat-store.ts:1958`). Even with the global setup dialog forcing the user to type a value, every `POST /agents/{id}/runs` request hit the backend with `user_id: null` — so AGNO's per-user memory / session scoping silently fell back to anonymous. The new per-instance code resolves `active.userId` at send-time and passes it to `runner.run({ userId: effectiveUserId })` (`src/stores/chat-store.ts:1729`); the runner forwards it as `user_id` in `POST /agents/{id}/runs` formdata (`src/lib/chat-runner.ts:134`) and `POST /agents/{id}/runs/{run}/continue` formdata (`src/lib/chat-runner.ts:243`). After upgrading, existing instances load with `userId === ""` and the per-instance setup dialog fires once on first chat — fill it and you're live.
+- **Browser spellcheck marked every user_id as a typo.** Even for valid identifiers like `mike.dev`, Chrome / Safari drew red squiggles under the input while the user was typing — distracting and suggesting the value was wrong. Both `UserIdSetupDialog` and `InstanceFormDialog` inputs now declare `spellCheck={false}` + `autoCorrect="off"` + `autoCapitalize="off"` (`src/components/common/UserIdSetupDialog.tsx`, `src/components/instances/InstanceFormDialog.tsx`) so the browser leaves identifiers alone.
+- **`onRunStarted` only upserted new sessions when `currentSessionId` was null** — so sessions created via "new session" + first message never appeared in the sidebar until `onRunCompleted → loadSessions` finished (~ full response later). Condition now fires on any non-empty `sid`, and the local UUID placeholder makes the sidebar update during streaming.
+- **`onRunStarted`'s local upsert wrote the user's first message as `last_message_preview`**, which made the session row preview look like it was quoting the user instead of describing the agent. Now omitted during streaming; `SessionItem`'s preview falls back to `Agent: ${agent_id}` (e.g. `Agent: agent-code-search`), which is correct until `loadSessions(true)` swaps in AGNO's server-side `last_message_preview` after the run completes.
+
+### Notes
+- `src/lib/user-id.ts` is the single source of truth for `validateUserId` / `hasUserId` / `getInstanceUserId` — UI / store / form all import from there. 25 unit tests in `tests/user-id.test.ts` cover the validation matrix (empty / whitespace / too short / too long / illegal chars / boundary lengths / trim semantics / null-safe getters).
+- Sessions-store gained 6 new test groups (15 assertions) in `tests/sessions-store.test.ts`: `loadSessions` passes `instance.userId` to `listSessions`, empty `userId` is omitted, defensive client filter drops cross-user rows, `userId` change auto-invalidates cache, `loadMoreSessions` also forwards `userId`, `clearSessionsCache` wipes all 3 maps.
+- Chat-store gained a test in `tests/chat-store.test.ts` covering the streaming-sidebar fix: `newSession` returns a UUID, `onRunStarted` upserts during streaming (not waiting for `onRunCompleted`), `byInstance` reflects the new session.
+
 ## [0.0.9] - 2026-07-23
 
 ### Added
@@ -69,33 +90,6 @@ All notable changes to Agno Desktop are documented here. Versions follow [Semant
 
 ### Notes
 - The built-in `MODEL_CONTEXT_WINDOWS` table in `src/lib/model-context-windows.ts` is intentionally kept as an offline fallback. The JSON file and the built-in table should stay in sync; new entries go in both places.
-
-## Unreleased
-
-### Added
-- **Tool-call UI is now readable and copy-pasteable as a unit.** Previously the JSON dump on every tool was opaque — you could only copy `args` or `result` separately, and shell commands looked like every other tool. `src/components/chat/ToolCallCard.tsx` now renders tool-specific views:
-    - `execute_command` / `shell`: command as a `bash` code block, remaining args as a key-value table, output split into `stdout` / `stderr` with the exit code.
-    - `read_file` / `write_file` / `list_directory`: file path as a header chip; content shown in a syntax-highlighted block with the language inferred from the file extension (`src/lib/tool-render-utils.ts:39`).
-    - `edit_file` / `str_replace` / `edit`: a unified diff view (line-level LCS, `src/lib/tool-render-utils.ts:78`) with green-add / red-del rows instead of JSON.
-    - All other tools: key-value table for args, JSON fallback for results.
-  Plus a **new "copy entire tool call" button** in the header — one click puts name + status + args + error + result + duration on the clipboard as Markdown (`formatToolCallForCopy` in `src/lib/tool-render-utils.ts:127`). Especially useful when pasting a tool invocation into an issue or another chat.
-- **Main left sidebar (AppShell) is now drag-resizable**, mirroring the chat-page column behavior. New `sidebarWidth` field in `src/stores/settings-store.ts:46` persists the chosen width (200–360px range). Double-click the handle to reset to default. Collapsed mode keeps the fixed 56px width and hides the handle. Implementation is shared via two new components — `src/components/common/VerticalResizeHandle.tsx` and `src/components/common/useColumnResize.ts` — replacing the inline `ResizeHandle` in `src/pages/ChatPage.tsx`.
-
-### Fixed
-- **Input box now clears immediately on send.** Previously `MessageInput.tsx:59` cleared the textarea only *after* `await sendMessage(...)` resolved, so a slow / hanging AGNO request would keep the user's text frozen on screen and they'd have to delete it manually to type the next message. Now the text and files are cleared *synchronously* before the await (`src/components/chat/MessageInput.tsx:57`), letting the user keep typing immediately. If `sendMessage` throws, the original text is restored so the user can retry without retyping.
-- **Slight jitter + brief blank flash in the chat area during streaming.** The chat panel used to re-render and re-parse the markdown of every message on every SSE chunk, which combined with the autoscroll `useEffect` (whose `messages` dep kept `scrollTop`/`scrollHeight` reads firing) caused two user-visible artifacts:
-    1. While the assistant was streaming, the entire message area would micro-jitter as `react-markdown` (with `rehype-highlight`'s `detect: true`) re-ran on every chunk, even for already-finalized messages.
-    2. Quickly scrolling up/down during streaming would briefly flash blank because the browser was busy re-parsing markdown instead of painting frames.
-
-  Three coordinated optimizations address both:
-    - **`<Markdown>` is now `React.memo`-wrapped.** Text `children` is a primitive, so a deep-equal on props is sufficient to skip re-parse. With `chat-store.replaceInTree` keeping unchanged siblings' references, historical message bails out entirely on streaming ticks.
-    - **New `<MarkdownStream>` (used by `MessageContent` for text parts) splits a streaming text into a "stable prefix" and a "live tail" at the last paragraph / code-fence boundary.** The prefix goes through `<Markdown>` (cache-friendly via memo); the tail is rendered as plain text with a streaming cursor. During streaming, most ticks only grow the tail — the prefix ref stays stable and its parsed DOM is reused. Inspired by OpenCode's `packages/session-ui/src/components/markdown-stream.ts`.
-    - **Autoscroll no longer depends on `messages`.** A `ResizeObserver` watches the scroll container's size and triggers `scrollTo` only when the actual rendered height changed. Replaces the previous `useEffect` that ran on every `messages` ref change (every SSE chunk), eliminating the per-chunk forced layout.
-
-  Net effect: streaming is visibly smoother, and `react-markdown` does at most O(1 paragraph) parse work per chunk instead of O(everything-so-far) work per chunk.
-
-### Notes
-- No behavior or UX changes outside of streaming smoothness — markdown still renders the same final output (covered by `tests/markdown-stream-render.test.ts` and `tests/markdown-codeblock.test.ts`).
 
 ## [0.0.6] - 2026-07-14
 
