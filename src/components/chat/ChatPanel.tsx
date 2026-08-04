@@ -415,7 +415,7 @@ export function ChatPanel() {
           ref={scrollRef}
           onScroll={onScroll}
           onWheel={onWheel}
-          className="absolute inset-0 overflow-y-auto"
+          className="absolute inset-0 overflow-y-auto overscroll-y-contain"
         >
           {currentSessionId && messages.length > 0 ? (
             <div className="mx-auto max-w-4xl py-6">

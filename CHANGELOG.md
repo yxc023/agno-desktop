@@ -4,6 +4,9 @@ All notable changes to Agno Desktop are documented here. Versions follow [Semant
 
 ## Unreleased
 
+### Fixed
+- **Chat scroll at boundary rubber-banded the whole page** — when the conversation got long enough to scroll, scrolling the wheel all the way to the top (or bottom) and then continuing caused the entire viewport to drag down (or up), leaving blank space at the top of the window. This was scroll chaining: the inner chat container (`src/components/chat/ChatPanel.tsx:418`) had `overflow-y-auto` with no `overscroll-behavior`, so wheel events that arrived at `scrollTop === 0` (or `scrollHeight`) propagated up to `html`/`body`, which had no `overflow: hidden` either. In Tauri WKWebView this surfaces as the macOS-style rubber-band pull on the whole window; in browsers it surfaces as the page scrolling under the chat. Two-layer fix: (1) global `overscroll-behavior: none` on `html, body, #root` (`src/index.css:32`) as the outermost safety net; (2) `overscroll-y-contain` on the chat scroll container (`src/components/chat/ChatPanel.tsx:418`), the right `InstancesPanel` aside (`src/pages/ChatPage.tsx:125`), the `SubAgentSidePanel` body (`src/components/chat/SubAgentSidePanel.tsx:98`), and the agent list inside `InstancesPanel` (`src/components/instances/InstancesPanel.tsx:133`) so each inner scroller swallows its own overscroll instead of bubbling it up.
+
 ## [0.0.10] - 2026-07-26
 
 ### Changed

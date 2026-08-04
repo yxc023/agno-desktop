@@ -95,7 +95,7 @@ export function SubAgentSidePanel() {
           closeButtonRef={closeButtonRef}
         />
 
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 overflow-y-auto overscroll-y-contain">
           <SubAgentBody top={top} message={message} />
         </div>
       </aside>

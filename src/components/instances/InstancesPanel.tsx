@@ -130,7 +130,7 @@ export function InstancesPanel() {
               {active.agents.length}
             </span>
           </div>
-          <div className="max-h-[40vh] space-y-0.5 overflow-y-auto p-1.5">
+          <div className="max-h-[40vh] space-y-0.5 overflow-y-auto overscroll-y-contain p-1.5">
             {active.agents.map((a) => (
               <button
                 key={a.id}

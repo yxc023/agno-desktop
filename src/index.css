@@ -29,6 +29,17 @@
   display: block !important;
 }
 
+/* 阻断 overscroll 传播：内层 scroll container (chat / session list / right panel)
+   滚到边界时，wheel 事件会冒泡到 html/body —— 在 Tauri WKWebView 上表现为
+   macOS 风格 rubber-band 拖动整页（顶部留白、底部露灰），在普通浏览器里
+   表现为滚动整页。html/body 上设 overscroll-behavior: none 是兜底；内层各自
+   的 overscroll-y-contain 见各 component 的 className。 */
+html,
+body,
+#root {
+  overscroll-behavior: none;
+}
+
 :root {
   /* 表面层级（暖灰） */
   --background: 36 16% 97%;

@@ -122,7 +122,7 @@ export function ChatPage() {
             />
 
             <aside
-              className="flex shrink-0 flex-col overflow-y-auto border-l border-sidebar-border bg-sidebar/40 p-3"
+              className="flex shrink-0 flex-col overflow-y-auto overscroll-y-contain border-l border-sidebar-border bg-sidebar/40 p-3"
               style={{ width: right.width }}
             >
               <InstancesPanel />
