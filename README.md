@@ -110,6 +110,7 @@ AGNO_PROXY_TARGET=http://192.168.1.100:8000 bun run dev   # 远程内网
 
 | 版本 | 日期 | 关键变更 |
 |------|------|---------|
+| 0.0.11 | 2026-08-05 | 长对话滚到边界 rubber-band 整页修复；README 重写 + macOS Gatekeeper 提示 |
 | 0.0.10 | 2026-07-26 | 每实例独立 `user_id`，session 互相隔离；sidebar streaming 即时刷新 |
 | 0.0.9  | 2026-07-23 | 消息虚拟化、Markdown 流式节流、Worker 代码高亮、hash 深链 |
 | 0.0.8  | —        | Tauri 桌面壳首版（绕过 CORS，5.8 MB dmg） |
@@ -198,4 +199,4 @@ git push --tags
 
 ---
 
-v0.0.10 · 多实例 + per-instance user_id + 流式聊天 + 桌面壳
+v0.0.11 · 长对话滚动修复 + README 重写
