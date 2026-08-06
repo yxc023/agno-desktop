@@ -169,6 +169,16 @@ Chat 回复里出现的静态文件链接（`.md` / `.txt` / 代码 / 图片 / `
 - **持久化**：tab 列表本身**不**持久化（与 chat 消息策略一致）；宽度 `filePreviewWidth` 持久化到 `settingsStore`。
 - **Tauri 优势**：`tauri-plugin-http` 已绕过 CORS，Tauri runtime 下任何 URL 直接 fetch；浏览器 runtime 下 AGNO 实例自身 URL 仍可能 CORS 失败（v1 不加新 proxy，详见 `docs/plans/2026-08-06-file-preview-panel-design.md`）。
 
+### 4.6 消息展示详细程度 (Message Verbosity)
+
+用户在设置 → 对话偏好 里控制三种维度，全部走 `settingsStore`，渲染层 (`MessageContent.tsx`) 即时生效（toggle 一改下次 render 就应用，不需要清空 stream）：
+
+- **`collapseReasoning`**（已有，默认 `false`）：reasoning 块渲染但默认折叠，header 仍可见，可手动展开。
+- **`hideReasoning`**（新增，默认 `false`）：完全不渲染 reasoning part。在 `partitionParts` 之前先 `.filter(p => p.type !== "reasoning")`。和 `collapseReasoning` 是正交维度 —— 同时打开时块直接消失，关闭折叠也无法恢复。
+- **`briefToolCalls`**（新增，默认 `false`）：连续 ≥ 2 个 tool_call 折叠成一张 `ToolCallGroup` chip（不分类型），头部显示 `N 次调用 · tool_name×count · 总耗时` + 错误计数徽章；点击展开内联看完整 `ToolCallCard`。关闭时恢复旧的"只合并 read-like"行为（向后兼容默认）。单个 tool_call 仍按 `ToolCallCard` 直渲染，不做 chip 包装。
+
+partition 算法抽出到 `src/lib/message-verbosity.ts` 作为纯函数（25 个 assertion 在 `tests/message-verbosity.test.ts` 覆盖 brief/non-brief 双路径 + 顺序不变量）。两个开关在主流程和 sub-agent 侧栏都生效（都复用 `MessageContent`）。
+
 ## 5. 状态管理
 
 ### 5.1 4 个独立 store
@@ -179,7 +189,7 @@ Chat 回复里出现的静态文件链接（`.md` / `.txt` / 代码 / 图片 / `
 | `sessionsStore` | 每个实例的 session 列表 | 内存（每次重启重拉） |
 | `chatStore` | 当前 session 消息 + ChatRunner | 内存 |
 | `uiStore` | 临时 UI 状态（sub-agent 面板栈、命令面板、HITL approval、添加实例对话框、`filePreviewPanelOpen` / `filePreviewTabs` 预览侧栏） | 内存 |
-| `settingsStore` | 用户偏好（主题 / 滚动 / 自动更新等；不含 userId） | localStorage |
+| `settingsStore` | 用户偏好（主题 / 滚动 / 打字机 / auto-update / filePreviewWidth / hideReasoning / briefToolCalls 等；不含 userId） | localStorage |
 
 **设计原则**：
 - 每个 store 职责单一，避免互相引用

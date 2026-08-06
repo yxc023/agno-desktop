@@ -31,6 +31,10 @@ export interface Settings {
   autoScroll: boolean;
   showToolDetails: boolean;
   collapseReasoning: boolean;
+  /** 完全隐藏 reasoning 块（与 collapseReasoning 叠加 — 不渲染 vs 仅折叠） */
+  hideReasoning: boolean;
+  /** 把连续 ≥ 2 个 tool_call 折叠成一张可展开卡片（与工具类型无关） */
+  briefToolCalls: boolean;
   typewriterEffect: boolean;
   currentView: "chat" | "instances" | "settings";
   sidebarCollapsed: boolean;
@@ -52,6 +56,8 @@ const defaults: Settings = {
   autoScroll: true,
   showToolDetails: false,
   collapseReasoning: false,
+  hideReasoning: false,
+  briefToolCalls: false,
   typewriterEffect: true,
   currentView: "chat",
   sidebarCollapsed: false,

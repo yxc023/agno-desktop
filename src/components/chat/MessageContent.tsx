@@ -34,8 +34,9 @@ import { ReasoningBlock } from "./ReasoningBlock";
 import { ToolCallCard } from "./ToolCallCard";
 import { ToolCallGroup } from "./ToolCallGroup";
 import { useSubMessageById } from "@/stores/chat-store";
+import { useSettingsStore } from "@/stores/settings-store";
 import type { ChatMessage, MessagePart, ToolCallPart } from "@/lib/message-types";
-import { isReadLikeTool } from "@/lib/tool-render-utils";
+import { partitionParts, type RenderItem } from "@/lib/message-verbosity";
 
 interface MessageContentProps {
   message: ChatMessage;
@@ -55,6 +56,13 @@ export const MessageContent = memo(function MessageContent({
   onOpenSubAgent,
   loadingHint = "main",
 }: MessageContentProps) {
+  // Verbosity 控制（settings-store）：
+  //   - hideReasoning=true：完全跳过 reasoning part，不渲染 ReasoningBlock
+  //   - briefToolCalls=true：partitionParts 把任意相邻 tool_call 折叠
+  // 这两个设置都"立即生效"——toggle 改了下次 render 就应用，不需要清空 stream。
+  const hideReasoning = useSettingsStore((s) => s.hideReasoning);
+  const briefToolCalls = useSettingsStore((s) => s.briefToolCalls);
+
   if (message.parts.length === 0 && message.status === "streaming") {
     if (loadingHint === "sub-agent") {
       return (
@@ -77,10 +85,13 @@ export const MessageContent = memo(function MessageContent({
     return null;
   }
 
-  // 把连续的 read-like tool_call 折叠成组，省 vertical space。
-  // 单个 call 不分组（多一层包装不划算）；遇到非 read-like / 非 tool_call
-  // 就刷新 buffer。
-  const rendered = groupConsecutiveReadCalls(message.parts);
+  // 渲染前先过滤掉被隐藏的 part 类型，再交给 partition 算法
+  // 决定 fold/single（partition 内部不再做 filter，保持纯函数语义）。
+  const visibleParts = hideReasoning
+    ? message.parts.filter((p) => p.type !== "reasoning")
+    : message.parts;
+
+  const rendered = partitionParts(visibleParts, briefToolCalls);
 
   return (
     <div className="space-y-1.5">
@@ -101,43 +112,7 @@ export const MessageContent = memo(function MessageContent({
   );
 });
 
-type RenderItem =
-  | { kind: "single"; part: MessagePart }
-  | { kind: "group"; tools: ToolCallPart[] };
-
-/**
- * 把 message.parts 切成两部分：
- * - 连续 ≥ 2 个 read-like tool_call → 一组
- * - 其他 part → 单独渲染
- *
- * "连续"指的是 parts[] 里紧邻且之间没有 text / reasoning / sub_message_marker /
- * 其它非 read-like tool_call 出现 —— 一个 text 节点就会把组打断。
- */
-function groupConsecutiveReadCalls(parts: MessagePart[]): RenderItem[] {
-  const out: RenderItem[] = [];
-  let buf: ToolCallPart[] = [];
-
-  const flush = () => {
-    if (buf.length === 0) return;
-    if (buf.length === 1) {
-      out.push({ kind: "single", part: buf[0] });
-    } else {
-      out.push({ kind: "group", tools: buf });
-    }
-    buf = [];
-  };
-
-  for (const part of parts) {
-    if (part.type === "tool_call" && isReadLikeTool(part.toolName)) {
-      buf.push(part);
-    } else {
-      flush();
-      out.push({ kind: "single", part });
-    }
-  }
-  flush();
-  return out;
-}
+type _RenderItem = RenderItem;
 
 const PartRenderer = memo(function PartRenderer({
   part,

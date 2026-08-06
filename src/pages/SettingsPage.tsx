@@ -32,6 +32,8 @@ export function SettingsPage() {
     autoScroll,
     showToolDetails,
     collapseReasoning,
+    hideReasoning,
+    briefToolCalls,
     typewriterEffect,
     autoCheckUpdate,
     update,
@@ -120,6 +122,20 @@ export function SettingsPage() {
               description="新消息中的 reasoning 块默认折叠"
               checked={collapseReasoning}
               onCheckedChange={(v) => update({ collapseReasoning: v })}
+            />
+            <Separator />
+            <ToggleRow
+              label="隐藏思考过程"
+              description="不再渲染 reasoning 块；与「默认折叠」叠加，关闭折叠也无法恢复"
+              checked={hideReasoning}
+              onCheckedChange={(v) => update({ hideReasoning: v })}
+            />
+            <Separator />
+            <ToggleRow
+              label="工具调用使用简略展示"
+              description="连续多次工具调用合并为可展开卡片，仅显示次数 / 工具名 / 总耗时"
+              checked={briefToolCalls}
+              onCheckedChange={(v) => update({ briefToolCalls: v })}
             />
             <Separator />
             <ToggleRow

@@ -1,36 +1,40 @@
 import { useState } from "react";
-import { ChevronDown, Files, Check, Copy } from "lucide-react";
+import { ChevronDown, Files, Layers, Check, Copy } from "lucide-react";
 import { cn, copyToClipboard } from "@/lib/utils";
 import type { ToolCallPart } from "@/lib/message-types";
 import { ToolCallCard } from "./ToolCallCard";
-import { pickToolIdentifier, formatToolCallForCopy } from "@/lib/tool-render-utils";
+import {
+  pickToolIdentifier,
+  formatToolCallForCopy,
+  isReadLikeTool,
+} from "@/lib/tool-render-utils";
 
 interface Props {
   tools: ToolCallPart[];
 }
 
 /**
- * ToolCallGroup — 把连续 N 个 read-like tool_call 折叠成一张卡片。
+ * ToolCallGroup — 把连续 N 个 tool_call 折叠成一张可展开卡片。
  *
- * 设计要点：
- * - 默认折叠。header 显示"Read N files" + 每个 tool 的标识（文件路径 / query），
- *   让用户一眼看出 agent 读了哪些东西。
- * - 展开后逐个渲染 `ToolCallCard`（保持单卡渲染逻辑只写一份）。
- * - 顶部有一个"整体拷贝"按钮，把所有 N 个 call 拼成 markdown 块，方便分享。
+ * Header 模式：
+ *   - "read"（全 read-like）→ "Read N files" + 路径 / query 列表（原有行为）
+ *   - "mixed"               → "N 次调用" + 按 tool_name 直方图
+ *                            （brief 模式 + 跨类型合并时使用）
  *
- * 触发条件：上游（MessageContent）只在连续 ≥ 2 个 read-like 时才包成 group，
- * 否则仍然走 `ToolCallCard` 直渲染 —— 单个 call 不值得多一层包装。
+ * Brief 模式下即使全是 read-like，也走 mixed 路径（更紧凑："read_file×5"
+ * 比 5 个路径挤在一起更易扫读）。
+ *
+ * 设计要点（保持）：
+ * - 默认折叠；展开后逐个渲染 ToolCallCard。
+ * - 顶部"整体拷贝"按钮把所有 N 个 call 拼成 markdown 块。
+ * - 单个 call 不走 group（多一层包装不划算）；由 partitionParts 上游控制。
  */
 export function ToolCallGroup({ tools }: Props) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
 
   const n = tools.length;
-  const identifiers = tools.map((t) => pickToolIdentifier(t.toolName, t.args));
-  // 显示用：第一个 + 剩余省略号
-  const first = identifiers[0];
-  const second = identifiers[1];
-  const remaining = Math.max(0, n - 2);
+  const allRead = tools.every((t) => isReadLikeTool(t.toolName));
 
   // 任一调用还在 running / error 时，沿用相同的 border 样式
   const anyCalling = tools.some((t) => t.status === "calling");
@@ -51,6 +55,32 @@ export function ToolCallGroup({ tools }: Props) {
       : allDuration < 1000
       ? `${allDuration}ms`
       : `${(allDuration / 1000).toFixed(2)}s`;
+
+  const errorCount = tools.filter((t) => t.status === "error").length;
+
+  // Header 内容
+  const readHeader = (() => {
+    const identifiers = tools.map((t) =>
+      pickToolIdentifier(t.toolName, t.args)
+    );
+    const first = identifiers[0];
+    const second = identifiers[1];
+    const remaining = Math.max(0, n - 2);
+    return { first, second, remaining };
+  })();
+
+  const mixedHeader = (() => {
+    // 按 toolName 计数 → "read_file×3 · shell×2 · web_search"
+    const counts = new Map<string, number>();
+    for (const t of tools) {
+      counts.set(t.toolName, (counts.get(t.toolName) ?? 0) + 1);
+    }
+    const parts: string[] = [];
+    for (const [name, c] of counts) {
+      parts.push(c === 1 ? name : `${name}×${c}`);
+    }
+    return parts.join(" · ");
+  })();
 
   async function handleCopyAll(e: React.MouseEvent) {
     e.stopPropagation();
@@ -77,28 +107,62 @@ export function ToolCallGroup({ tools }: Props) {
           onClick={() => setOpen(!open)}
           className="flex min-w-0 flex-1 items-center gap-2 text-left"
         >
-          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-muted/60 font-mono text-[12px] text-muted-foreground">
-            <Files className="h-3 w-3" />
+          <span
+            className={cn(
+              "flex h-5 w-5 shrink-0 items-center justify-center rounded font-mono text-[12px]",
+              anyError
+                ? "bg-destructive/15 text-destructive"
+                : allRead
+                ? "bg-muted/60 text-muted-foreground"
+                : "bg-accent/10 text-accent"
+            )}
+          >
+            {allRead ? (
+              <Files className="h-3 w-3" />
+            ) : (
+              <Layers className="h-3 w-3" />
+            )}
           </span>
 
           <span className="shrink-0 text-[12.5px] font-semibold leading-none">
-            Read {n} {n === 1 ? "file" : "files"}
+            {allRead ? (
+              <>
+                Read {n} {n === 1 ? "file" : "files"}
+              </>
+            ) : (
+              <>{n} 次调用</>
+            )}
           </span>
 
           <span className="min-w-0 flex-1 truncate font-mono text-[11px] leading-none text-muted-foreground/80">
-            {first ?? "(no path)"}
-            {second && (
+            {allRead ? (
               <>
-                <span className="px-1 text-muted-foreground/40">·</span>
-                {second}
+                {readHeader.first ?? "(no path)"}
+                {readHeader.second && (
+                  <>
+                    <span className="px-1 text-muted-foreground/40">·</span>
+                    {readHeader.second}
+                  </>
+                )}
+                {readHeader.remaining > 0 && (
+                  <span className="px-1 text-muted-foreground/60">
+                    · +{readHeader.remaining}
+                  </span>
+                )}
               </>
-            )}
-            {remaining > 0 && (
-              <span className="px-1 text-muted-foreground/60">
-                · +{remaining}
-              </span>
+            ) : (
+              <>{mixedHeader}</>
             )}
           </span>
+
+          {errorCount > 0 && (
+            <span
+              className="shrink-0 rounded bg-destructive/15 px-1.5 font-mono text-[9.5px] font-medium uppercase tracking-wider text-destructive"
+              title={`${errorCount} 调用失败`}
+            >
+              {errorCount} fail
+            </span>
+          )}
 
           {durationLabel && (
             <span className="hidden shrink-0 font-mono text-[10px] text-muted-foreground/60 sm:inline">
