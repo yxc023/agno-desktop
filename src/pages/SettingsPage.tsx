@@ -126,7 +126,7 @@ export function SettingsPage() {
             <Separator />
             <ToggleRow
               label="隐藏思考过程"
-              description="不再渲染 reasoning 块；与「默认折叠」叠加，关闭折叠也无法恢复"
+              description="不再渲染 reasoning 块；并清除 text 里泄漏的 <think> / <thinking> / <reasoning> 内联推理标签"
               checked={hideReasoning}
               onCheckedChange={(v) => update({ hideReasoning: v })}
             />

@@ -35,8 +35,9 @@ import { ToolCallCard } from "./ToolCallCard";
 import { ToolCallGroup } from "./ToolCallGroup";
 import { useSubMessageById } from "@/stores/chat-store";
 import { useSettingsStore } from "@/stores/settings-store";
-import type { ChatMessage, MessagePart, ToolCallPart } from "@/lib/message-types";
-import { partitionParts, type RenderItem } from "@/lib/message-verbosity";
+import type { ChatMessage, MessagePart } from "@/lib/message-types";
+import { partitionParts } from "@/lib/message-verbosity";
+import { stripThinkTags } from "@/lib/strip-think-tags";
 
 interface MessageContentProps {
   message: ChatMessage;
@@ -102,6 +103,7 @@ export const MessageContent = memo(function MessageContent({
             part={item.part}
             message={message}
             index={idx}
+            hideReasoning={hideReasoning}
             onOpenSubAgent={onOpenSubAgent}
           />
         ) : (
@@ -112,17 +114,18 @@ export const MessageContent = memo(function MessageContent({
   );
 });
 
-type _RenderItem = RenderItem;
-
 const PartRenderer = memo(function PartRenderer({
   part,
   message,
   index,
+  hideReasoning,
   onOpenSubAgent,
 }: {
   part: MessagePart;
   message: ChatMessage;
   index: number;
+  /** 透传 hideReasoning,text 分支据此剥 <think> 标签 */
+  hideReasoning: boolean;
   onOpenSubAgent?: (subMessageId: string) => void;
 }) {
   const isLast = index === message.parts.length - 1;
@@ -134,7 +137,10 @@ const PartRenderer = memo(function PartRenderer({
       return (
         <div className="text-[14px] leading-[1.7] text-foreground/95">
           <MarkdownStream streaming={streaming} sessionId={message.sessionId}>
-            {part.text}
+            {/* hideReasoning=true 时同时剥掉 text 里泄漏的 <think>/<thinking>/<reasoning>
+                块 —— 这些是模型 inline 推理产物,与 reasoning part 同源;toggle
+                一开就一并隐藏。空字符串 fallback 到 "" 让 MarkdownStream 退化。 */}
+            {hideReasoning ? stripThinkTags(part.text) : part.text}
           </MarkdownStream>
         </div>
       );
