@@ -3,14 +3,10 @@ import {
   ArrowDown,
   Loader2,
   Plus,
-  Bot,
-  Sparkles,
-  Terminal,
   Cpu,
   Globe,
-  RefreshCw,
-  AlertCircle,
   AlertTriangle,
+  Terminal,
   User,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -24,18 +20,8 @@ import { useSettingsStore } from "@/stores/settings-store";
 import {
   useActiveInstance,
   useActiveAgents,
-  useIsLoadingAgents,
   useInstancesStore,
 } from "@/stores/instances-store";
-import type { AgAgentResponse } from "@/lib/agno-types";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { cn } from "@/lib/utils";
 import { UserIdSetupDialog } from "@/components/common/UserIdSetupDialog";
 import { useAutoScroll } from "@/hooks/use-auto-scroll";
 import { useHashScroll, writeMessageHash } from "@/hooks/use-hash-scroll";
@@ -65,8 +51,6 @@ const EXAMPLE_PROMPTS = [
 export function ChatPanel() {
   const active = useActiveInstance();
   const agents = useActiveAgents();
-  const loadingAgents = useIsLoadingAgents();
-  const probe = useInstancesStore((s) => s.probeInstance);
   const loadAgents = useInstancesStore((s) => s.loadAgents);
   const currentSessionId = useSessionsStore((s) => s.currentSessionId);
   const messages = useCurrentSessionMessages(currentSessionId);
@@ -179,7 +163,6 @@ export function ChatPanel() {
   }
 
   const isRunning = runner?.isRunning() ?? false;
-  const agentsError = active.lastAgentsError;
   const userId = active.userId;
   const needUserId = !userId.trim();
   // 当前选中的 agent（用来读 model id → 查 context window）
@@ -188,225 +171,31 @@ export function ChatPanel() {
 
   return (
     <div className="flex h-full flex-col">
-      {/* Header */}
-      <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border bg-background/60 px-4 backdrop-blur-sm">
-        <Select
-          value={selectedAgentId ?? ""}
-          onValueChange={(v) => setSelectedAgent(v)}
-        >
-          <SelectTrigger className="h-7 w-auto min-w-[200px] border-none bg-transparent shadow-none hover:bg-muted font-mono text-[12px]">
-            {loadingAgents ? (
-              <span className="flex items-center gap-1.5 text-muted-foreground">
-                <Loader2 className="h-3 w-3 animate-spin" />
-                loading agents…
-              </span>
-            ) : (
-              <SelectValue placeholder="选择 Agent" />
-            )}
-          </SelectTrigger>
-          <SelectContent>
-            {loadingAgents && (
-              <div className="flex items-center gap-2 px-2 py-3 font-mono text-[11px] text-muted-foreground">
-                <Loader2 className="h-3 w-3 animate-spin" />
-                正在从实例拉取 agents...
-              </div>
-            )}
-
-            {!loadingAgents && agentsError && (
-              <div className="space-y-2 px-2 py-2">
-                <div className="flex items-start gap-1.5 font-mono text-[11px] text-destructive">
-                  <AlertCircle className="h-3 w-3 mt-0.5 shrink-0" />
-                  <div className="flex-1 break-all whitespace-pre-line">
-                    <div className="font-medium">拉取失败</div>
-                    <div className="text-destructive/80 text-[10px] mt-0.5">
-                      {agentsError}
-                    </div>
-                  </div>
-                </div>
-                {agentsError.includes("CORS") &&
-                  active &&
-                  /^https?:\/\//i.test(active.baseUrl) && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-7 w-full border-accent/40 text-accent"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        if (!active) return;
-                        const id = active.id;
-                        useInstancesStore
-                          .getState()
-                          .updateInstance(id, { baseUrl: "/api" });
-                        // 重新探活 + 拉取（用最新的 store state）
-                        setTimeout(() => {
-                          const fresh = useInstancesStore
-                            .getState()
-                            .instances.find((i) => i.id === id);
-                          if (!fresh) return;
-                          useInstancesStore.getState().probeInstance(id);
-                          useInstancesStore
-                            .getState()
-                            .loadAgents(id, true);
-                        }, 100);
-                      }}
-                    >
-                      <Terminal className="h-3 w-3 mr-1.5" />
-                      一键改用 /api 代理
-                    </Button>
-                  )}
-                <div className="flex gap-1.5">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-7 flex-1 text-[11px]"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      if (active) {
-                        probe(active.id);
-                        loadAgents(active.id, true);
-                      }
-                    }}
-                  >
-                    <RefreshCw className="h-3 w-3 mr-1.5" />
-                    重试
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-7 text-[11px]"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      const docsBase =
-                        active.baseUrl.replace(/\/api\/?$/, "") ||
-                        active.baseUrl;
-                      window.open(`${docsBase}/docs`, "_blank");
-                    }}
-                    title="查看 AGNO API 文档"
-                  >
-                    <Terminal className="h-3 w-3" />
-                  </Button>
-                </div>
-              </div>
-            )}
-
-            {!loadingAgents && !agentsError && agents.length === 0 && (
-              <div className="space-y-2 px-2 py-3">
-                <div className="flex items-center gap-1.5 font-mono text-[11px] text-muted-foreground">
-                  <AlertCircle className="h-3 w-3 text-warning" />
-                  当前实例未发现 agent
-                </div>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-7 w-full text-[11px]"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    if (active) loadAgents(active.id, true);
-                  }}
-                >
-                  <RefreshCw className="h-3 w-3 mr-1.5" />
-                  重新拉取
-                </Button>
-              </div>
-            )}
-
-            {!loadingAgents &&
-              !agentsError &&
-              agents.map((a: AgAgentResponse) => (
-                <SelectItem
-                  key={a.id}
-                  value={a.id}
-                  className="font-mono text-[12px]"
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="h-1.5 w-1.5 rounded-full bg-accent" />
-                    <span className="font-medium">{a.name ?? a.id}</span>
-                    {a.model &&
-                      (typeof a.model === "object"
-                        ? a.model.name
-                        : a.model) && (
-                        <span className="text-[10px] text-muted-foreground">
-                          {typeof a.model === "object"
-                            ? a.model.name
-                            : a.model}
-                        </span>
-                      )}
-                  </div>
-                </SelectItem>
-              ))}
-          </SelectContent>
-        </Select>
-
-        {active && (
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            className="h-6 w-6"
-            onClick={() => {
-              probe(active.id);
-              loadAgents(active.id, true);
-            }}
-            title="重新探活 + 拉取 agents"
-            disabled={loadingAgents}
-          >
-            <RefreshCw
-              className={cn("h-3 w-3", loadingAgents && "animate-spin")}
-            />
-          </Button>
-        )}
-
-        <div className="flex items-center gap-1.5 font-mono text-[10.5px] text-muted-foreground/70">
-          <span className="h-1 w-1 rounded-full bg-success" />
-          <span className="truncate max-w-[240px]">{active.baseUrl}</span>
-        </div>
-
-        {/* user_id 显示 + 快速编辑 */}
-        {userId.trim() && (
-          <button
-            onClick={() => setShowUserIdSetup(true)}
-            className="ml-auto flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[10.5px] text-muted-foreground/70 hover:bg-muted/50 hover:text-foreground"
-            title="点击修改 user_id"
-          >
-            <User className="h-2.5 w-2.5" />
-            <span>{userId}</span>
-          </button>
-        )}
-
-        {/* Context 进度（圆环）：18px SVG 圆环，hover 弹 tooltip 显示数字 */}
+      {/* Slim Header — 只剩 context 进度 + new session 按钮。
+          Agent 选择内嵌在 MessageInput 底部那一行（AgentPicker）；
+          实例信息在 SessionList 顶部（InstanceInfoStrip）；
+          user_id 已在 MessageInput 内部展示。 */}
+      <div className="flex h-10 shrink-0 items-center justify-end gap-2 border-b border-border bg-background/60 px-4 backdrop-blur-sm">
         <ContextProgressBar
           currentTokens={currentInputTokens}
           agent={selectedAgent}
           modelId={currentModelId}
         />
-
-        <div className="flex items-center gap-1.5">
-          {needUserId && (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => setShowUserIdSetup(true)}
-              className="h-7 border-warning/50 text-warning"
-            >
-              <AlertTriangle className="h-3 w-3 mr-1" />
-              <span className="text-[11px]">设置 user_id</span>
-            </Button>
-          )}
-          {isRunning && (
-            <div className="flex items-center gap-1.5 rounded-full bg-accent/10 px-2 py-0.5">
-              <span className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse-dot" />
-              <span className="font-mono text-[10px] text-accent">streaming</span>
-            </div>
-          )}
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => newSession(selectedAgentId ?? undefined)}
-            className="h-7 font-mono text-[11px]"
-          >
-            <Plus className="h-3 w-3" />
-            <span>new</span>
-          </Button>
-        </div>
+        {isRunning && (
+          <div className="flex items-center gap-1.5 rounded-full bg-accent/10 px-2 py-0.5">
+            <span className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse-dot" />
+            <span className="font-mono text-[10px] text-accent">streaming</span>
+          </div>
+        )}
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => newSession(selectedAgentId ?? undefined)}
+          className="h-7 font-mono text-[11px]"
+        >
+          <Plus className="h-3 w-3" />
+          <span>new</span>
+        </Button>
       </div>
 
       {/* Messages */}

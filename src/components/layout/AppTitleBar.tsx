@@ -36,13 +36,23 @@
  */
 
 import * as React from "react";
-import { AlertTriangle, Loader2, RefreshCw, RotateCcw } from "lucide-react";
+import {
+  AlertTriangle,
+  Loader2,
+  PanelRightClose,
+  PanelRightOpen,
+  RefreshCw,
+  RotateCcw,
+} from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { useLocation } from "react-router-dom";
 import { useUpdater } from "@/hooks/use-updater";
 import { relaunchApp } from "@/lib/updater";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { useUIStore } from "@/stores/ui-store";
+import { useActiveInstance } from "@/stores/instances-store";
 
 export function AppTitleBar() {
   const updater = useUpdater();
@@ -89,7 +99,7 @@ export function AppTitleBar() {
         </span>
       </div>
 
-      {/* 右侧：更新状态/按钮 */}
+      {/* 右侧：更新状态/按钮 + 文件预览开关（始终在右缘，提供稳定锚点） */}
       <div className="pr-3 flex items-center gap-2 h-full">
         {status === "downloading" && (
           <DownloadIndicator
@@ -126,6 +136,8 @@ export function AppTitleBar() {
         {status === "error" && (
           <UpdateErrorChip error={error} onRetry={updater.checkNow} />
         )}
+
+        <FilePreviewToggle />
       </div>
     </div>
   );
@@ -326,6 +338,91 @@ function RestartButton({ version, onRestart }: RestartButtonProps) {
       </TooltipTrigger>
       <TooltipContent side="bottom" className="font-mono text-[11px]">
         重启应用以应用 v{version} 更新
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+/* ---------------------------------------------------------------- *
+ * 文件预览侧栏开关
+ *
+ * 始终在 titlebar 最右侧出现（即使没 active instance、没 chat session），
+ * 但只有满足两个条件时才真正能 toggle：
+ *   - 当前路由是 /chat（其他页面没有 chat 主区域可放侧栏）
+ *   - 当前有 active instance（侧栏里展示的 tab 关联 session，没实例就无从关联）
+ *
+ * 没有上述条件时按钮 disabled、tooltip 解释原因；仍保持可见性，让用户
+ * 在任意页面都能找到这个能力的入口（不会「功能消失」）。
+ *
+ * 视觉：
+ * - 默认态：PanelRightOpen（侧栏收起）
+ * - 打开态：PanelRightClose（侧栏展开）+ accent 色 highlight
+ * - 有 tab 时图标右上角加一个 accent 小圆点（不过分吸引，但可发现）
+ * ---------------------------------------------------------------- */
+
+function FilePreviewToggle() {
+  const location = useLocation();
+  const active = useActiveInstance();
+  const panelOpen = useUIStore((s) => s.filePreviewPanelOpen);
+  const allTabs = useUIStore((s) => s.filePreviewTabs);
+  const toggle = useUIStore((s) => s.toggleFilePreviewPanel);
+
+  const onChat =
+    location.pathname === "/" || location.pathname.startsWith("/chat");
+  const canToggle = onChat && !!active;
+
+  // filter 不能放进 zustand selector —— 每次返回新数组引用会让 React
+  // 的 useSyncExternalStore 判定 snapshot 变了，无限 re-render。这里
+  // 选出原始数组后用 useMemo 派生：依赖 active?.id，session 不变就稳定。
+  const tabsForActiveSession = React.useMemo(
+    () => allTabs.filter((t) => t.sessionId === active?.id),
+    [allTabs, active?.id]
+  );
+
+  const tooltip = !onChat
+    ? "切到「对话」页打开文件预览侧栏"
+    : !active
+      ? "先添加一个 AGNO 实例再打开预览侧栏"
+      : panelOpen
+        ? "关闭文件预览侧栏"
+        : "打开文件预览侧栏";
+
+  const hasTabs = tabsForActiveSession.length > 0;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          data-tauri-drag-region={false}
+          onClick={() => {
+            if (canToggle) toggle();
+          }}
+          disabled={!canToggle}
+          aria-label={tooltip}
+          aria-pressed={panelOpen}
+          className={cn(
+            "relative flex h-6 w-6 items-center justify-center rounded transition-all",
+            "text-muted-foreground/70 hover:text-foreground hover:bg-foreground/10",
+            panelOpen && canToggle && "bg-accent/15 text-accent hover:bg-accent/25",
+            !canToggle && "cursor-not-allowed opacity-50 hover:bg-transparent"
+          )}
+        >
+          {panelOpen ? (
+            <PanelRightClose className="h-3.5 w-3.5" />
+          ) : (
+            <PanelRightOpen className="h-3.5 w-3.5" />
+          )}
+          {hasTabs && (
+            <span
+              aria-hidden="true"
+              className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-accent ring-1 ring-background/80"
+            />
+          )}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" className="font-mono text-[11px]">
+        {tooltip}
       </TooltipContent>
     </Tooltip>
   );

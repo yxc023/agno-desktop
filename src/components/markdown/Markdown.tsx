@@ -6,12 +6,21 @@ import rehypeRaw from "rehype-raw";
 import { cn } from "@/lib/utils";
 import { CodeBlock } from "./CodeBlock";
 import { openExternalUrl } from "@/lib/open-external-url";
+import { detectPreviewKind, resolvePreviewUrl } from "@/lib/preview-kind";
+import { useUIStore } from "@/stores/ui-store";
+import { useActiveInstance } from "@/stores/instances-store";
 
 interface Props {
   children: string;
   className?: string;
   /** 当文本正在流式追加时，给最后字符加 cursor 动画 */
   streaming?: boolean;
+  /**
+   * 当前 message 所属 session。决定 file preview tab 的 sessionId 作用域；
+   * 不传则用 "_global"（不属于任何 session，跨 session 共享 tab —— 给
+   * tool-call result / sub-agent 渲染路径用）。
+   */
+  sessionId?: string;
 }
 
 /**
@@ -42,7 +51,10 @@ export const Markdown = memo(function Markdown({
   children,
   className,
   streaming,
+  sessionId,
 }: Props) {
+  const active = useActiveInstance();
+  const baseUrl = active?.baseUrl ?? "";
   return (
     <div
       className={cn(
@@ -94,20 +106,36 @@ export const Markdown = memo(function Markdown({
             );
           },
           a({ href, children }) {
+            const safeHref = typeof href === "string" ? href : "";
             return (
               <a
-                href={href}
+                href={safeHref}
                 target="_blank"
                 rel="noreferrer"
                 onClick={(e) => {
-                  // Tauri Webview 默认拦截 target=_blank，要么在 webview 内
-                  // 开新 tab 要么静默失败。preventDefault 后调 shell.open
-                  // 走系统默认浏览器，体验与"普通浏览器"一致。
-                  // 保留 href + target 让 dev 工具 / 浏览器环境（裸 vite）
-                  // 仍能 hover/copy/中键新窗口打开。
+                  // 策略：
+                  //   - href 能被 detectPreviewKind 识别成"可预览文件"
+                  //     (md / text / code / image / html) → 走 file-preview
+                  //     面板，自动创建 tab、保持上下文。
+                  //   - 否则 → 保留原行为：Tauri Webview 拦截 target=_blank
+                  //     时走 shell.open 跳系统默认浏览器；浏览器环境（裸 vite）
+                  //     走 window.open。
+                  //
+                  // AGNO agent 偶尔不输出完整 URL，而是 `file_path:...` /
+                  // `//...` / `/...` —— 都先按当前实例 baseUrl 拼成完整 URL，
+                  // 否则 fetch 解析不了（`new URL("//foo")` 直接抛）。
+                  if (!safeHref) return;
                   e.preventDefault();
                   e.stopPropagation();
-                  void openExternalUrl(href);
+                  const resolved = resolvePreviewUrl(safeHref, baseUrl);
+                  const kind = detectPreviewKind(resolved);
+                  if (kind) {
+                    useUIStore
+                      .getState()
+                      .previewFile(sessionId ?? "_global", resolved, kind);
+                  } else {
+                    void openExternalUrl(resolved);
+                  }
                 }}
               >
                 {children}

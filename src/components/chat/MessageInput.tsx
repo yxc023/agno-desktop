@@ -7,6 +7,7 @@ import { shouldSendOnEnter } from "@/lib/ime-composing";
 import { useChatStore } from "@/stores/chat-store";
 import { useActiveInstance } from "@/stores/instances-store";
 import { UserIdSetupDialog } from "@/components/common/UserIdSetupDialog";
+import { AgentPicker } from "./AgentPicker";
 
 export function MessageInput() {
   const sendMessage = useChatStore((s) => s.sendMessage);
@@ -96,8 +97,8 @@ export function MessageInput() {
   }
 
   return (
-    <div className="border-t border-border bg-background/80 backdrop-blur px-4 py-3">
-      <div className="max-w-4xl mx-auto">
+    <div className="w-full min-w-[480px] border-t border-border bg-background/80 backdrop-blur">
+      <div className="mx-auto max-w-4xl px-4 py-3">
         {needUserId && (
           <button
             onClick={() => setShowUserIdSetup(true)}
@@ -125,7 +126,7 @@ export function MessageInput() {
 
         <div
           className={cn(
-            "relative flex items-end gap-2 rounded-xl border bg-card shadow-sm transition-all",
+            "relative flex min-w-0 items-end gap-2 rounded-xl border bg-card shadow-sm transition-all",
             "focus-within:border-primary/40 focus-within:shadow-md",
             isRunning && "border-primary/30",
             needUserId && "opacity-70"
@@ -161,11 +162,11 @@ export function MessageInput() {
                 ? "Agent 正在响应…"
                 : needUserId
                 ? "先设置 user_id 才能发送消息"
-                : "发送消息 (Enter 发送, Shift+Enter 换行)"
+                : "发送消息"
             }
             rows={1}
             disabled={isRunning}
-            className="flex-1 min-h-[36px] max-h-[240px] border-0 shadow-none focus-visible:ring-0 bg-transparent resize-none px-1 py-2 text-sm"
+            className="min-w-0 flex-1 min-h-[36px] max-h-[240px] border-0 shadow-none focus-visible:ring-0 bg-transparent resize-none px-1 py-2 text-sm"
           />
 
           {isRunning ? (
@@ -195,19 +196,21 @@ export function MessageInput() {
           )}
         </div>
 
-        <div className="flex items-center justify-between mt-1.5 px-1">
+        {/* Bottom row: agent 选择 + (spacer) + user_id。
+            min-w-0 + truncate 让两端在窄列里各自 truncate 而非推挤。 */}
+        <div className="mt-1.5 flex min-w-0 items-center gap-2 px-1">
+          <AgentPicker className="min-w-0 flex-shrink" />
+          <div className="flex-1 min-w-0" />
           <button
             onClick={() => setShowUserIdSetup(true)}
-            className="flex items-center gap-1 text-[10px] text-muted-foreground/80 hover:text-foreground"
+            className="flex shrink-0 items-center gap-1 text-[10px] text-muted-foreground/80 hover:text-foreground"
+            title="点击修改 user_id"
           >
             <User className="h-2.5 w-2.5" />
             <span className="font-mono">
               user_id: {userId.trim() || "未设置"}
             </span>
           </button>
-          <div className="text-[10px] text-muted-foreground">
-            Enter 发送 · Shift+Enter 换行
-          </div>
         </div>
       </div>
 

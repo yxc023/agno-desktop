@@ -99,7 +99,7 @@ const UserMessage = memo(function UserMessage({ message, onCopy }: Props) {
             - 圆角采用"右下略小"，呼应"消息流向"的隐喻 */}
         <div className="ml-auto w-fit max-w-[85%] rounded-lg rounded-br-sm border border-primary/15 bg-primary/[0.06] px-3.5 py-2.5 shadow-sm">
           <div className="text-[13.5px] leading-[1.7] text-foreground/95">
-            <Markdown>{text}</Markdown>
+            <Markdown sessionId={message.sessionId}>{text}</Markdown>
           </div>
         </div>
       </div>

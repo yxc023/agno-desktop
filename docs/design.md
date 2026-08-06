@@ -158,6 +158,17 @@ for await (event of stream):
 - **代码**: JetBrains Mono
 - **Markdown 标题**: Inter SemiBold
 
+### 4.5 文件预览侧栏 (File Preview Panel)
+
+Chat 回复里出现的静态文件链接（`.md` / `.txt` / 代码 / 图片 / `.html`）自动在右侧 tab 侧栏里渲染，而不是跳出客户端去系统浏览器。设计要点：
+
+- **触发点**：`src/components/markdown/Markdown.tsx` 的 `<a>` 自定义渲染器。点击时 `detectPreviewKind(href)` 判断扩展名；命中（md / text / code / image / html）→ 调 `uiStore.previewFile(sessionId, href, kind)`，未命中 → 保留原 `openExternalUrl` 行为。
+- **状态**：`ui-store` 新增 `filePreviewPanelOpen` / `filePreviewTabs` / `activeFileTabId`。tab id = `hash(sessionId + "|" + url)` —— 同 URL 同 session 复用 tab（重新 fetch），跨 session 视为不同 tab。切 session 时该 session 的 tabs 仍在 store 里、只是不渲染；切回时恢复。
+- **渲染管线**：`FilePreviewPanel` 组件 (`src/components/chat/FilePreviewPanel.tsx`) 在 `state === "loading"` 时启动 `fetchPreviewContent(url)`（`src/lib/file-fetcher.ts` —— 5MB 上限 + 错误归一化 + latin1 fallback + abort signal）。按 `kind` 分发：md → 现有 `Markdown`，text → `<pre>` mono，code → `CodeBlock` + worker 高亮，image → `<img>`，html → `<iframe sandbox="">`。
+- **错误兜底**：失败 tab 显示 `在浏览器中打开` + `复制 URL`，确保 CORS-blocked 的 AGNO 实例 URL 仍有出路。
+- **持久化**：tab 列表本身**不**持久化（与 chat 消息策略一致）；宽度 `filePreviewWidth` 持久化到 `settingsStore`。
+- **Tauri 优势**：`tauri-plugin-http` 已绕过 CORS，Tauri runtime 下任何 URL 直接 fetch；浏览器 runtime 下 AGNO 实例自身 URL 仍可能 CORS 失败（v1 不加新 proxy，详见 `docs/plans/2026-08-06-file-preview-panel-design.md`）。
+
 ## 5. 状态管理
 
 ### 5.1 4 个独立 store
@@ -167,6 +178,7 @@ for await (event of stream):
 | `instancesStore` | AGNO 实例 CRUD（含 per-instance `userId`）+ AgnoClient 缓存 | localStorage |
 | `sessionsStore` | 每个实例的 session 列表 | 内存（每次重启重拉） |
 | `chatStore` | 当前 session 消息 + ChatRunner | 内存 |
+| `uiStore` | 临时 UI 状态（sub-agent 面板栈、命令面板、HITL approval、添加实例对话框、`filePreviewPanelOpen` / `filePreviewTabs` 预览侧栏） | 内存 |
 | `settingsStore` | 用户偏好（主题 / 滚动 / 自动更新等；不含 userId） | localStorage |
 
 **设计原则**：

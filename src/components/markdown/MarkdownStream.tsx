@@ -44,6 +44,8 @@ interface Props {
   /** 当前是否处于流式输出。流式时启用 prefix/tail 拆分；非流式时整段一次性渲染。 */
   streaming?: boolean;
   className?: string;
+  /** 透传给 <Markdown> 的 sessionId —— 决定 file preview tab 的作用域。 */
+  sessionId?: string;
 }
 
 function escapeText(s: string): string {
@@ -58,6 +60,7 @@ export const MarkdownStream = memo(function MarkdownStream({
   children,
   streaming = false,
   className,
+  sessionId,
 }: Props) {
   // 流式期间节流释放：每 ~24ms 推一段，snap 到空白/标点。
   // 非流式（streaming=false 或历史回放）→ 一次性跟上，不延迟。
@@ -80,7 +83,7 @@ export const MarkdownStream = memo(function MarkdownStream({
 
   if (!streaming) {
     return (
-      <Markdown className={className} streaming={false}>
+      <Markdown className={className} streaming={false} sessionId={sessionId}>
         {split.prefix}
       </Markdown>
     );
@@ -88,7 +91,7 @@ export const MarkdownStream = memo(function MarkdownStream({
 
   if (!split.tail) {
     return (
-      <Markdown className={className} streaming={false}>
+      <Markdown className={className} streaming={false} sessionId={sessionId}>
         {split.prefix}
       </Markdown>
     );
@@ -97,7 +100,9 @@ export const MarkdownStream = memo(function MarkdownStream({
   return (
     <div className={cn("prose prose-sm dark:prose-invert max-w-none", className)}>
       {split.prefix && (
-        <Markdown streaming={false}>{split.prefix}</Markdown>
+        <Markdown streaming={false} sessionId={sessionId}>
+          {split.prefix}
+        </Markdown>
       )}
       <span className="whitespace-pre-wrap streaming-cursor text-foreground/95">
         {escapeText(split.tail)}

@@ -158,7 +158,9 @@ const PartRenderer = memo(function PartRenderer({
     case "text":
       return (
         <div className="text-[14px] leading-[1.7] text-foreground/95">
-          <MarkdownStream streaming={streaming}>{part.text}</MarkdownStream>
+          <MarkdownStream streaming={streaming} sessionId={message.sessionId}>
+            {part.text}
+          </MarkdownStream>
         </div>
       );
 

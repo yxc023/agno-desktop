@@ -30,6 +30,7 @@ import { useSessionsStore } from "@/stores/sessions-store";
 import { useChatStore } from "@/stores/chat-store";
 import type { AgSessionSummary } from "@/lib/agno-types";
 import { Terminal } from "lucide-react";
+import { InstanceInfoStrip } from "./InstanceInfoStrip";
 
 const EMPTY_ARR: AgSessionSummary[] = [];
 
@@ -111,6 +112,10 @@ export function SessionList() {
 
   return (
     <div className="flex h-full flex-col">
+      {/* 实例信息：当前活跃实例的名字 + baseUrl + 探活状态。
+          放在 SessionList 最顶部，让用户随时能看到自己在操作哪个实例。 */}
+      <InstanceInfoStrip />
+
       {/* Header */}
       <div className="space-y-2.5 border-b border-sidebar-border px-3 py-3">
         <div className="flex items-center justify-between">
