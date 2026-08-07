@@ -5,7 +5,7 @@ import {
   Bot,
   PanelRightOpen,
 } from "lucide-react";
-import { memo, useCallback, useEffect, useState } from "react";
+import { memo, useCallback, useState } from "react";
 import { cn, copyToClipboard, formatRelativeTime } from "@/lib/utils";
 import { Markdown } from "@/components/markdown/Markdown";
 import { Button } from "@/components/ui/button";
@@ -311,7 +311,7 @@ const SystemMessage = memo(function SystemMessage({ message }: Props) {
 });
 
 /**
- * StreamingBadge — 在流式消息自己的 footer 里显示 token 计数 + elapsed。
+ * StreamingBadge — 在流式消息自己的 footer 里显示 token 计数。
  *
  * 之前这个 indicator 挂在 ChatPanel header（"右上角"），用户反馈
  * "应该放在消息流的左下角的三个点旁边"。这里改为在 MessageBubble 的
@@ -321,10 +321,9 @@ const SystemMessage = memo(function SystemMessage({ message }: Props) {
  *   - input tokens: useLatestInputTokens(message.sessionId)
  *   - live output: 直接扫当前 message.parts（chat-runner 每 chunk mutate，
  *                  顶层 ref 被 replaceInTree 重置）
- *   - elapsed: 本组件 mount 时启动 setInterval，unmount 时 cleanup
  *
- * 只显示 4 项；"累计" output exact baseline（latestOutputTokensBySession）
- * 不显示——用户明确说不需要。
+ * 只显示 2 项（input + live output）；"累计" output exact baseline
+ * 和 elapsed timer 都不显示 —— 用户明确反馈都不要。
  */
 function StreamingBadge({ message }: { message: ChatMessage }) {
   const sessionId = message.sessionId ?? null;
@@ -335,16 +334,6 @@ function StreamingBadge({ message }: { message: ChatMessage }) {
     if (p.type === "text") streamingText += p.text;
   }
   const liveOutput = estimateTokens(streamingText);
-
-  const [elapsed, setElapsed] = useState(0);
-  useEffect(() => {
-    const startedAt = Date.now();
-    setElapsed(0);
-    const t = setInterval(() => {
-      setElapsed(Date.now() - startedAt);
-    }, 100);
-    return () => clearInterval(t);
-  }, []);
 
   return (
     <span
@@ -368,18 +357,6 @@ function StreamingBadge({ message }: { message: ChatMessage }) {
       >
         ↓ ~{liveOutput.toLocaleString()}
       </span>
-      <span className="tabular-nums text-accent/70">
-        {formatStreamingElapsed(elapsed)}
-      </span>
     </span>
   );
-}
-
-function formatStreamingElapsed(ms: number): string {
-  if (ms < 1000) return `${ms}ms`;
-  const s = ms / 1000;
-  if (s < 60) return `${s.toFixed(1)}s`;
-  const m = Math.floor(s / 60);
-  const sec = Math.floor(s % 60);
-  return `${m}m${sec.toString().padStart(2, "0")}s`;
 }
