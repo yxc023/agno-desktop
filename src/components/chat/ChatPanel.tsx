@@ -67,7 +67,6 @@ export function ChatPanel() {
   const setSelectedAgent = useChatStore((s) => s.setSelectedAgent);
   const newSession = useChatStore((s) => s.newSession);
   const sendMessage = useChatStore((s) => s.sendMessage);
-  const runner = useChatStore((s) => s.runner);
   const autoScroll = useSettingsStore((s) => s.autoScroll);
   const [showUserIdSetup, setShowUserIdSetup] = useState(false);
 
@@ -162,7 +161,6 @@ export function ChatPanel() {
     return null;
   }
 
-  const isRunning = runner?.isRunning() ?? false;
   const userId = active.userId;
   const needUserId = !userId.trim();
   // 当前选中的 agent（用来读 model id → 查 context window）

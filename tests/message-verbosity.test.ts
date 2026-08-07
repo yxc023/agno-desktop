@@ -146,10 +146,13 @@ console.log("\nbrief mode:");
   );
 }
 {
-  // single tool stays single (≥ 2 required)
+  // brief: single tool becomes single-item group（不展开成完整 ToolCallCard）
   const a = tool("web_search", "a");
   const out = partitionParts([a], true);
-  assert(out.length === 1 && out[0].kind === "single", "single tool → single (brief)");
+  assert(out.length === 1 && out[0].kind === "group", "single tool → 1-item group (brief)");
+  if (out[0].kind === "group") {
+    assert(out[0].tools.length === 1 && out[0].tools[0] === a, "group contains the single tool");
+  }
 }
 {
   // text breaks the group
@@ -165,7 +168,7 @@ console.log("\nbrief mode:");
   assert(out[2].kind === "group", "[c,d] group");
 }
 {
-  // reasoning breaks the group
+  // reasoning breaks the group; 单个后续 tool 在 brief 模式仍包成 group
   const a = tool("shell", "a");
   const b = tool("shell", "b");
   const r = rsn("thinking...");
@@ -174,10 +177,11 @@ console.log("\nbrief mode:");
   assert(out.length === 3, "reasoning breaks → 3 items (brief)");
   assert(out[0].kind === "group", "[a,b] group");
   assert(out[1].kind === "single", "[reasoning] single");
-  assert(out[2].kind === "single", "[c] single (only 1 after reasoning)");
+  assert(out[2].kind === "group", "[c] 1-item group (brief wraps single)");
 }
 {
-  // text-tool-text-tool-text-tool-text → 6 singles
+  // text-tool-text-tool-text-tool-text → 6 items, alternating
+  // single(text) + 1-item group(tool)；每个 tool 被 text 隔开都不再合并。
   const t1 = txt("first");
   const a = tool("web_search", "a");
   const t2 = txt("second");
@@ -185,9 +189,12 @@ console.log("\nbrief mode:");
   const t3 = txt("third");
   const c = tool("web_search", "c");
   const out = partitionParts([t1, a, t2, b, t3, c], true);
+  assert(out.length === 6, "alternating text/tool → 6 items (brief)");
+  const kinds = out.map((i) => i.kind);
   assert(
-    out.length === 6 && out.every((i) => i.kind === "single"),
-    "alternating text/tool → 6 singles (brief)"
+    JSON.stringify(kinds) ===
+      JSON.stringify(["single", "group", "single", "group", "single", "group"]),
+    "alternating kinds = single,group,single,group,single,group"
   );
 }
 {
@@ -243,7 +250,9 @@ console.log("\ninvariants:");
   );
 }
 {
-  // non-tool parts never get folded into tool groups (brief)
+  // 非 tool 的 part（text / reasoning / reference）永不与 tool_call 合并成
+  // group —— 即使 brief=true；tool 在 brief 模式单独包成 1-item group 也行，
+  // 但跨类型的 fold 必须避免（break 是必要的）。
   const t = txt("x");
   const r = rsn("y");
   const ref: MessagePart = { type: "reference", references: [] };
@@ -251,9 +260,12 @@ console.log("\ninvariants:");
     [t, tool("read_file", "a"), r, ref],
     true
   );
+  assert(out.length === 4, "non-tool breaks → 4 items (brief)");
+  const kinds = out.map((i) => i.kind);
   assert(
-    out.length === 4 && out.every((i) => i.kind === "single"),
-    "non-tool parts never fold into tool groups (brief)"
+    JSON.stringify(kinds) ===
+      JSON.stringify(["single", "group", "single", "single"]),
+    "kinds = single(text),group(tool),single(rsn),single(ref)"
   );
 }
 

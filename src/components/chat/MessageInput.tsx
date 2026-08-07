@@ -4,16 +4,29 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { shouldSendOnEnter } from "@/lib/ime-composing";
-import { useChatStore } from "@/stores/chat-store";
+import { useChatStore, useCurrentSessionMessages } from "@/stores/chat-store";
 import { useActiveInstance } from "@/stores/instances-store";
+import { useSessionsStore } from "@/stores/sessions-store";
 import { UserIdSetupDialog } from "@/components/common/UserIdSetupDialog";
 import { AgentPicker } from "./AgentPicker";
 
 export function MessageInput() {
   const sendMessage = useChatStore((s) => s.sendMessage);
   const cancelRun = useChatStore((s) => s.cancelRun);
-  const runner = useChatStore((s) => s.runner);
-  const isRunning = runner?.isRunning() ?? false;
+
+  // Per-session streaming 状态 —— 之前直接读 `runner?.isRunning()` 是全局
+  // 状态，导致切到其他 session 时输入框仍显示"Agent 正在响应…"。
+  // 这里改为：自己 session 的 message 列表里有 streaming 的才算"在响应中"，
+  // 不被其他 session 的流式填充干扰。
+  const currentSessionId = useSessionsStore((s) => s.currentSessionId);
+  const messages = useCurrentSessionMessages(currentSessionId);
+  const sessionIsStreaming = messages.some((m) => m.status === "streaming");
+
+  // 全局 runner 状态 —— 仅用于"防止并发 send"和文案差异。
+  // runner 是 chat-store 唯一的实例，切到 B 后仍指向 A 的 runner；
+  // 在 B 里点 send 会替换 runner，留下泄漏的 SSE 流。
+  // 所以 send guard 用全局判断 + 给用户提示"另一会话在运行"。
+  const globalRunnerIsRunning = useChatStore((s) => s.runner?.isRunning() ?? false);
 
   const [text, setText] = useState("");
   const [files, setFiles] = useState<File[]>([]);
@@ -51,7 +64,9 @@ export function MessageInput() {
       return;
     }
     const trimmed = text.trim();
-    if (!trimmed || sending || isRunning) return;
+    // globalRunnerIsRunning 守 send 门：避免在另一个 session 还在跑时
+    // 替换 runner（runner.abort() 没被调用，老 SSE 流还在持续往 store 写）。
+    if (!trimmed || sending || globalRunnerIsRunning) return;
     // 先抓快照再清空——这样 send 失败时还能把原文塞回去。
     const snapshotText = trimmed;
     const snapshotFiles = files;
@@ -128,7 +143,8 @@ export function MessageInput() {
           className={cn(
             "relative flex min-w-0 items-end gap-2 rounded-xl border bg-card shadow-sm transition-all",
             "focus-within:border-primary/40 focus-within:shadow-md",
-            isRunning && "border-primary/30",
+            // 边框高亮：仅"本 session 在响应"时亮；别的 session 跑时不影响
+            sessionIsStreaming && "border-primary/30",
             needUserId && "opacity-70"
           )}
         >
@@ -143,7 +159,8 @@ export function MessageInput() {
             variant="ghost"
             size="icon-sm"
             onClick={() => fileInputRef.current?.click()}
-            disabled={isRunning || needUserId}
+            // 附件按钮：本 session 跑时禁用；其他 session 跑时不禁用
+            disabled={sessionIsStreaming || needUserId}
             className="ml-1 mb-1 shrink-0"
             title="附加文件"
           >
@@ -158,18 +175,22 @@ export function MessageInput() {
             onCompositionStart={handleCompositionStart}
             onCompositionEnd={handleCompositionEnd}
             placeholder={
-              isRunning
+              // 三态：本 session 在响应 / 其他 session 跑 / 未设置 user_id
+              sessionIsStreaming
                 ? "Agent 正在响应…"
+                : globalRunnerIsRunning
+                ? "另一会话正在运行（请先停止或切换）"
                 : needUserId
                 ? "先设置 user_id 才能发送消息"
                 : "发送消息"
             }
             rows={1}
-            disabled={isRunning}
+            // 禁用：本 session 跑 OR 别的 session 跑 OR user_id 未设置
+            disabled={sessionIsStreaming || globalRunnerIsRunning || needUserId}
             className="min-w-0 flex-1 min-h-[36px] max-h-[240px] border-0 shadow-none focus-visible:ring-0 bg-transparent resize-none px-1 py-2 text-sm"
           />
 
-          {isRunning ? (
+          {sessionIsStreaming ? (
             <Button
               variant="ghost"
               size="icon-sm"
@@ -183,9 +204,15 @@ export function MessageInput() {
             <Button
               size="icon-sm"
               onClick={handleSend}
-              disabled={!text.trim() || sending}
+              disabled={!text.trim() || sending || globalRunnerIsRunning}
               className="mr-1 mb-1 shrink-0"
-              title={needUserId ? "先设置 user_id" : "发送"}
+              title={
+                needUserId
+                  ? "先设置 user_id"
+                  : globalRunnerIsRunning
+                  ? "另一会话正在运行"
+                  : "发送"
+              }
             >
               {sending ? (
                 <Loader2 className="h-4 w-4 animate-spin" />

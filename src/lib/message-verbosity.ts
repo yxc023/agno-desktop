@@ -2,12 +2,15 @@
  * message-verbosity — message.parts[] 的 partition 算法
  *
  * 把 ChatMessage.parts 切成 RenderItem 序列，给 MessageContent.tsx 渲染：
- *   - { kind: "single", part }   → PartRenderer 直接渲染
- *   - { kind: "group", tools }   → ToolCallGroup 折叠渲染
+ *   - { kind: "single", part }   → PartRenderer 直接渲染（直接展示原始 part）
+ *   - { kind: "group", tools }   → ToolCallGroup 折叠渲染（先看 chip，展开看 card）
  *
  * 两个 mode：
- *   - brief=false（默认）：保留旧行为 —— 只对 read-like 工具做相邻合并（≥ 2 个）
- *   - brief=true：任何相邻 tool_call 都合并；≥ 2 个才出 group，单个仍走 single
+ *   - brief = false（默认）：只对 read-like 工具做相邻合并（≥ 2 个）；
+ *     单个 tool_call 仍然走 single（保持向后兼容，老用户看不到任何变化）。
+ *   - brief = true：任何相邻 tool_call 都合并；**且**单个 tool_call 也包成
+ *     长度为 1 的 group，让 brief 模式下"任何 tool 都是折叠态"——展开前
+ *     看不到完整命令 / 输出，符合"隐藏工具细节"的用户预期。
  *
  * hideReasoning / 其他 part 过滤**不**在此处做：
  * 这层只是顺序与"是否折叠"决策；调用方负责在 partition 之前先
@@ -33,7 +36,10 @@ export function partitionParts(
 
   const flush = () => {
     if (toolBuf.length === 0) return;
-    if (toolBuf.length === 1) {
+    // brief 模式一律出 group（含长度为 1 的）；非 brief 模式只有 ≥ 2 才出 group，
+    // 单个 tool_call 仍走 single —— 保持原有"完整 ToolCallCard 直接渲染"行为，
+    // 老用户的视觉无变化。
+    if (toolBuf.length === 1 && !brief) {
       out.push({ kind: "single", part: toolBuf[0] });
     } else {
       out.push({ kind: "group", tools: toolBuf });

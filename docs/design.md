@@ -177,6 +177,8 @@ Chat 回复里出现的静态文件链接（`.md` / `.txt` / 代码 / 图片 / `
 - **`hideReasoning`**（新增，默认 `false`）：完全不渲染 reasoning part。在 `partitionParts` 之前先 `.filter(p => p.type !== "reasoning")`。和 `collapseReasoning` 是正交维度 —— 同时打开时块直接消失，关闭折叠也无法恢复。同时启用 `src/lib/strip-think-tags.ts` 把 text part 里泄漏的 inline 推理标签（`<think>...`、`<thinking>...`、`<reasoning>...`，大小写不敏感、平衡括号匹配处理嵌套、未闭合 / 孤儿 close 都覆盖）一并剥掉 —— 因为这些标签本质是模型的 reasoning 产物泄漏到 text 通道。
 - **`briefToolCalls`**（新增，默认 `false`）：连续 ≥ 2 个 tool_call 折叠成一张 `ToolCallGroup` chip（不分类型），头部显示 `N 次调用 · tool_name×count · 总耗时` + 错误计数徽章；点击展开内联看完整 `ToolCallCard`。关闭时恢复旧的"只合并 read-like"行为（向后兼容默认）。单个 tool_call 仍按 `ToolCallCard` 直渲染，不做 chip 包装。
 
+  v0.0.13 后修订：brief 模式下单个 tool_call 也包成 1-item group（"任何 tool 都是折叠态"），消除"被 text 隔开的单个 tool 仍展开完整命令 / 输出"的不一致感。非 brief 模式保持原行为不受影响。
+
 partition 算法抽出到 `src/lib/message-verbosity.ts` 作为纯函数（25 个 assertion 在 `tests/message-verbosity.test.ts` 覆盖 brief/non-brief 双路径 + 顺序不变量）。两个开关在主流程和 sub-agent 侧栏都生效（都复用 `MessageContent`）。
 
 ### 4.7 流式状态指示 (StreamingBadge)
