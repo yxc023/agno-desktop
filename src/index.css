@@ -177,6 +177,16 @@ body,
   --font-mono: "JetBrains Mono", "Fira Code", ui-monospace, SFMono-Regular,
     Menlo, Monaco, Consolas, monospace;
   --font-display: "Inter", sans-serif;
+
+  /* 自定义 keyframes → Tailwind v4 utility class 桥接。
+     只声明 @keyframes 不会生成 .animate-* 工具类 —— 必须再定义
+     --animate-* 变量,Tailwind 才会产出对应的 utility rule。
+     shimmer / blink / scan / glow 不走 .animate-* 工具类,而是直接在
+     CSS 规则里用 animation: ... 引用(见下方 .streaming-cursor /
+     .shimmer-bg / .scan-line),所以这里不需要列它们。 */
+  --animate-pulse-dot: pulse-dot 1.4s ease-in-out infinite;
+  --animate-fade-in: fade-in 0.18s ease-out;
+  --animate-slide-in-right: slide-in-from-right 0.22s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 @keyframes accordion-down {
