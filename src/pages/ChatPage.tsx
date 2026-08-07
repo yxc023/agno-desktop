@@ -41,6 +41,7 @@ export function ChatPage() {
   const persistedSessions = useSettingsStore((s) => s.chatSessionsWidth);
   const persistedRight = useSettingsStore((s) => s.chatRightWidth);
   const persistedFilePreview = useSettingsStore((s) => s.filePreviewWidth);
+  const sessionsListOpen = useSettingsStore((s) => s.sessionsListOpen);
   const updateSettings = useSettingsStore((s) => s.update);
 
   // 当前 session（用于 file preview 的 per-session 过滤）
@@ -121,19 +122,23 @@ export function ChatPage() {
   return (
     <>
       <div className="flex min-h-0 flex-1 overflow-hidden">
-        <aside
-          className="flex shrink-0 flex-col border-r border-sidebar-border bg-sidebar"
-          style={{ width: sessions.width }}
-        >
-          <SessionList />
-        </aside>
+        {sessionsListOpen && (
+          <>
+            <aside
+              className="flex shrink-0 flex-col border-r border-sidebar-border bg-sidebar"
+              style={{ width: sessions.width }}
+            >
+              <SessionList />
+            </aside>
 
-        <VerticalResizeHandle
-          ariaLabel="拖动调整会话栏宽度（双击重置）"
-          onMouseDown={sessions.dragHandlers.onMouseDown}
-          onDoubleClick={sessions.dragHandlers.onDoubleClick}
-          onMouseUp={sessions.persist}
-        />
+            <VerticalResizeHandle
+              ariaLabel="拖动调整会话栏宽度（双击重置）"
+              onMouseDown={sessions.dragHandlers.onMouseDown}
+              onDoubleClick={sessions.dragHandlers.onDoubleClick}
+              onMouseUp={sessions.persist}
+            />
+          </>
+        )}
 
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
           <ChatPanel />

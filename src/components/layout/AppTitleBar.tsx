@@ -39,6 +39,8 @@ import * as React from "react";
 import {
   AlertTriangle,
   Loader2,
+  PanelLeftClose,
+  PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
   RefreshCw,
@@ -52,6 +54,7 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { useUIStore } from "@/stores/ui-store";
+import { useSettingsStore } from "@/stores/settings-store";
 import { useActiveInstance } from "@/stores/instances-store";
 
 export function AppTitleBar() {
@@ -137,6 +140,7 @@ export function AppTitleBar() {
           <UpdateErrorChip error={error} onRetry={updater.checkNow} />
         )}
 
+        <SessionsListToggle />
         <FilePreviewToggle />
       </div>
     </div>
@@ -359,6 +363,72 @@ function RestartButton({ version, onRestart }: RestartButtonProps) {
  * - 打开态：PanelRightClose（侧栏展开）+ accent 色 highlight
  * - 有 tab 时图标右上角加一个 accent 小圆点（不过分吸引，但可发现）
  * ---------------------------------------------------------------- */
+
+/* ---------------------------------------------------------------- *
+ * Session 列表开关
+ *
+ * 与 FilePreviewToggle 镜像：始终可见，给用户提供稳定锚点；只在 /chat
+ * 路由且有 active instance 时才能 toggle。状态持久化到 settingsStore
+ * （用户偏好——关闭一次希望下次启动也保持）。
+ *
+ * 视觉：
+ * - 默认态：PanelLeftOpen（列表收起）
+ * - 打开态：PanelLeftClose（列表展开）+ accent 色 highlight
+ *
+ * 关闭时 ChatPage 不渲染左侧 <aside + resize handle>，整个 chat 区域
+ * 从屏幕最左边开始，主流程占满整行；再次 toggle 即恢复。
+ * ---------------------------------------------------------------- */
+
+function SessionsListToggle() {
+  const location = useLocation();
+  const active = useActiveInstance();
+  const sessionsListOpen = useSettingsStore((s) => s.sessionsListOpen);
+  const update = useSettingsStore((s) => s.update);
+
+  const onChat =
+    location.pathname === "/" || location.pathname.startsWith("/chat");
+  const canToggle = onChat && !!active;
+
+  const tooltip = !onChat
+    ? "切到「对话」页管理 session 列表"
+    : !active
+      ? "先添加一个 AGNO 实例再管理 session 列表"
+      : sessionsListOpen
+        ? "关闭 session 列表"
+        : "打开 session 列表";
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          data-tauri-drag-region={false}
+          onClick={() => {
+            if (canToggle) update({ sessionsListOpen: !sessionsListOpen });
+          }}
+          disabled={!canToggle}
+          aria-label={tooltip}
+          aria-pressed={sessionsListOpen}
+          className={cn(
+            "relative flex h-6 w-6 items-center justify-center rounded transition-all",
+            "text-muted-foreground/70 hover:text-foreground hover:bg-foreground/10",
+            sessionsListOpen && canToggle && "bg-accent/15 text-accent hover:bg-accent/25",
+            !canToggle && "cursor-not-allowed opacity-50 hover:bg-transparent"
+          )}
+        >
+          {sessionsListOpen ? (
+            <PanelLeftClose className="h-3.5 w-3.5" />
+          ) : (
+            <PanelLeftOpen className="h-3.5 w-3.5" />
+          )}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" className="font-mono text-[11px]">
+        {tooltip}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
 
 function FilePreviewToggle() {
   const location = useLocation();

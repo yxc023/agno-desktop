@@ -47,6 +47,8 @@ export interface Settings {
   sidebarWidth?: number;
   /** 启动时自动检查更新（仅 Tauri desktop 生效；browser / dev 默认 no-op） */
   autoCheckUpdate: boolean;
+  /** ChatPage 内左侧 session 列表是否显示（持久化，默认 true）。 */
+  sessionsListOpen: boolean;
 }
 
 const KEY = "agno:settings";
@@ -62,6 +64,7 @@ const defaults: Settings = {
   currentView: "chat",
   sidebarCollapsed: false,
   autoCheckUpdate: true,
+  sessionsListOpen: true,
 };
 
 interface SettingsState extends Settings {
