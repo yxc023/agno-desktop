@@ -1,5 +1,5 @@
 import { Fragment, memo, type ReactNode } from "react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import rehypeRaw from "rehype-raw";
@@ -76,6 +76,21 @@ export const Markdown = memo(function Markdown({
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkBreaks]}
         rehypePlugins={[rehypeRaw]}
+        urlTransform={(value) => {
+          // AGNO agents 用自定义 scheme `file_path:requirements/foo.md` 引用
+          // 当前实例上的资源。react-markdown 内置 defaultUrlTransform 会把
+          // 不在白名单(https?/ircs?/mailto/xmpp)的协议 strip 成空字符串,导致
+          // 渲染出来 `<a href="">...</a>` —— 我的 click handler 拿不到 href 直接
+          // return 不调用 preventDefault,浏览器走默认行为在新 tab 里打开当前
+          // webview URL,看起来像"开了一个新的 agno-desktop 页面"。
+          //
+          // 把 file_path: 显式放行,其他 URL 仍走默认 transform 的安全网
+          // (javascript: / data: / vbscript: 等仍被 strip)。
+          if (typeof value === "string" && value.startsWith("file_path:")) {
+            return value;
+          }
+          return defaultUrlTransform(value);
+        }}
         components={{
           pre({ children }) {
             return <Fragment>{children}</Fragment>;

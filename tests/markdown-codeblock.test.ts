@@ -173,6 +173,49 @@ function main(): void {
     assert(!html.includes("[object Object]"), "no [object Object] in multi-block render");
   }
 
+  // ─────────────── 8) Markdown：file_path: 协议不被 strip ───────────────
+  // AGNO agent 用自定义 scheme `file_path:requirements/foo.md` 引用
+  // 当前实例上的资源。react-markdown 的 defaultUrlTransform 会把不在
+  // (https?|ircs?|mailto|xmpp) 白名单的协议 strip 成 "" —— 结果是
+  // `<a href="">...</a>`,我的 click handler 拿不到 href 直接 return,
+  // 浏览器走默认 <a target="_blank"> 在新 tab 里打开当前 webview URL,
+  // 看起来像"开了个新的 agno-desktop 页面"。
+  //
+  // Markdown.tsx 的 urlTransform 显式放行 file_path:,
+  // 这里是 SSR 测试该契约。
+  console.log("=== Markdown: file_path: protocol passes urlTransform ===");
+  {
+    const src = "[requirements/plan.md](file_path:requirements/plan.md)";
+    const html = renderMarkdown(src);
+    assert(
+      html.includes('href="file_path:requirements/plan.md"'),
+      "file_path: link keeps full href (not stripped to '')"
+    );
+    assert(
+      !html.includes('href=""'),
+      "no empty-href links from file_path: stripping"
+    );
+    assert(html.includes("requirements/plan.md"), "link text content preserved");
+  }
+  {
+    // 反向 case：javascript: 应该被 strip（默认 transform 的安全网还在）
+    const src = "[click](javascript:alert(1))";
+    const html = renderMarkdown(src);
+    assert(
+      !html.includes('href="javascript:'),
+      "javascript: still stripped by defaultUrlTransform safety net"
+    );
+  }
+  {
+    // 普通 https 不受影响
+    const src = "[docs](https://example.com/foo.md)";
+    const html = renderMarkdown(src);
+    assert(
+      html.includes('href="https://example.com/foo.md"'),
+      "https URL passes through unchanged"
+    );
+  }
+
   console.log(
     `\n${failed === 0 ? "all assertions passed" : `${failed} assertions failed`}`
   );
