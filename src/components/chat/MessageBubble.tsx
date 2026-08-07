@@ -260,10 +260,14 @@ function MessageFooter({
         </Badge>
       )}
       {message.status === "streaming" && (
-        <div className="flex items-center gap-1.5">
-          <span className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse-dot" />
-          <span className="text-accent">streaming</span>
-        </div>
+        // Per-message 流式标识 — 仅 3 个脉冲点，不带 "streaming" 文字 / token 计数。
+        // 文字与计数统一在 ChatPanel header 的 StreamingIndicator 显示；这里只
+        // 负责"哪条 message 在被流式填充"的视觉锚点。
+        <span className="flex items-center gap-[3px]" aria-hidden>
+          <span className="h-1 w-1 rounded-full bg-accent animate-pulse-dot" />
+          <span className="h-1 w-1 rounded-full bg-accent animate-pulse-dot [animation-delay:0.15s]" />
+          <span className="h-1 w-1 rounded-full bg-accent animate-pulse-dot [animation-delay:0.3s]" />
+        </span>
       )}
       {message.metrics?.total_tokens != null && (
         <span className="ml-auto flex items-center gap-2">

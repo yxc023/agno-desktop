@@ -179,6 +179,20 @@ Chat 回复里出现的静态文件链接（`.md` / `.txt` / 代码 / 图片 / `
 
 partition 算法抽出到 `src/lib/message-verbosity.ts` 作为纯函数（25 个 assertion 在 `tests/message-verbosity.test.ts` 覆盖 brief/non-brief 双路径 + 顺序不变量）。两个开关在主流程和 sub-agent 侧栏都生效（都复用 `MessageContent`）。
 
+### 4.7 流式状态指示 (StreamingIndicator)
+
+流式期间 header 右侧渲染 `StreamingIndicator`，替代原来的静态 `● streaming` 徽章。Claude-Code 风格，显示：
+
+- 三个错峰脉冲点（reuse `animate-pulse-dot` + stagger 0/0.15s/0.3s，与 MessageContent loading hint 视觉一致）
+- `↑ N`：上次已完成 LLM round 的精确 input_tokens（per-call，来自 `ModelRequestCompleted` SSE 事件，存 `chat-store.latestInputTokensBySession`）
+- `↓ ~M`：实时 output 估算，walk 当前 streaming message 的累积 `TextPart.text`，CJK ÷ 1.5 + 其他 ÷ 4 后 ceil。`~` 前缀明确告诉用户"估算中"
+- `累计 K`：上一轮已完成 round 的精确 output_tokens（per-call，来自同一个 SSE 事件，存 `chat-store.latestOutputTokensBySession`，可选用 — 旧版 AGNO 不发就只显示 live 估计）
+- elapsed：自组件 mount 起累计（isRunning 触发 mount/unmount），100ms tick
+
+仅在 `runner.isRunning() === true` 时渲染；完成后整段消失，把视觉焦点让回对话。message footer 的旧"streaming" 文本徽章简化为只 3 个点（不抢 header 焦点，仅锚定"哪条 message 在被填充"）。
+
+为什么 output 用估算：AGNO SSE 不发 per-delta token 事件，`output_tokens` 只在每次 LLM round 完成时一次拿到。所以 live 计数只能从 text 长度推。`tests/estimate-tokens.test.ts` 30+ assertions 覆盖空 / 非字符串 / CJK 范围（中日韩）/ ASCII / 混合 / 标点 / streaming 增量 / 单调性。Runner callback 签名扩展为 `onModelRequestCompleted(input, modelId, output?, reasoning?)` —— `output` / `reasoning` 都是 optional，缺了不影响 `input` 主路径。
+
 ## 5. 状态管理
 
 ### 5.1 4 个独立 store

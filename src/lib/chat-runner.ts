@@ -37,13 +37,24 @@ export interface ChatRunnerCallbacks {
   onChunk?: (text: string) => void;
   /**
    * 每次 LLM 调用完成时触发（AGNO ModelRequestCompleted 事件）。
-   * inputTokens 是该次调用的精确 token 数（per-call），不是 run 内的累加。
-   * modelId 是该次调用的真实模型 id（来自事件 `model` 字段，跟
-   * agent endpoint 返回的 wrapper 名不同，例如 "OpenAiChat"）。
-   * 上下文窗口查询用 modelId；两者都可用于 context 进度条：
-   * "最后一次"的值就是"当前 context size" 和 "当前 model"。
+   * inputTokens / outputTokens 是该次调用的精确 token 数（per-call），
+   * 不是 run 内的累加。modelId 是该次调用的真实模型 id（来自事件 `model`
+   * 字段，跟 agent endpoint 返回的 wrapper 名不同，例如 "OpenAiChat"）。
+   * 上下文窗口查询用 modelId；inputTokens / outputTokens 写入
+   * latestInputTokensBySession / latestOutputTokensBySession 供
+   * StreamingIndicator 等 UI 消费 —— 后者在 streaming 期间叠加 live
+   * estimate 显示给用户。
+   *
+   * outputTokens 是 optional：AGNO 老版本可能不发 output_tokens，UI 拿到
+   * undefined 时回退到纯 estimate。reasoning_tokens 同理（独立显示未启用，
+   * 当前只是链路占位）。
    */
-  onModelRequestCompleted?: (inputTokens: number, modelId: string | null) => void;
+  onModelRequestCompleted?: (
+    inputTokens: number,
+    modelId: string | null,
+    outputTokens?: number,
+    reasoningTokens?: number
+  ) => void;
   /** 一个新的 sub-agent message 被创建（用于在 store 里预先占位等）。 */
   onSubMessageCreated?: (parentMessageId: string, sub: ChatMessage) => void;
   /** sub 消息的最终化（completed/error/cancelled），用于聚合状态。 */
@@ -552,7 +563,18 @@ export class ChatRunner {
             typeof data.model === "string" && data.model.trim()
               ? data.model
               : null;
-          callbacks.onModelRequestCompleted?.(data.input_tokens, modelId);
+          const outputTokens =
+            typeof data.output_tokens === "number" ? data.output_tokens : undefined;
+          const reasoningTokens =
+            typeof data.reasoning_tokens === "number"
+              ? data.reasoning_tokens
+              : undefined;
+          callbacks.onModelRequestCompleted?.(
+            data.input_tokens,
+            modelId,
+            outputTokens,
+            reasoningTokens
+          );
         }
         break;
       }

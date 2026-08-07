@@ -14,6 +14,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { VirtualMessageList } from "./VirtualMessageList";
 import { MessageInput } from "./MessageInput";
 import { ContextProgressBar } from "./ContextProgressBar";
+import { StreamingIndicator } from "./StreamingIndicator";
 import { useChatStore, useCurrentSessionMessages, useLatestInputTokens, useLatestModelId } from "@/stores/chat-store";
 import { useSessionsStore } from "@/stores/sessions-store";
 import { useSettingsStore } from "@/stores/settings-store";
@@ -181,12 +182,7 @@ export function ChatPanel() {
           agent={selectedAgent}
           modelId={currentModelId}
         />
-        {isRunning && (
-          <div className="flex items-center gap-1.5 rounded-full bg-accent/10 px-2 py-0.5">
-            <span className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse-dot" />
-            <span className="font-mono text-[10px] text-accent">streaming</span>
-          </div>
-        )}
+        {isRunning && <StreamingIndicator />}
         <Button
           variant="ghost"
           size="sm"

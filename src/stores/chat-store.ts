@@ -294,6 +294,23 @@ interface ChatState {
    */
   latestInputTokensBySession: Record<string, number>;
   /**
+   * 每个 session 的"最新一次 LLM 调用的精确 output_tokens"。
+   *
+   * 跟 `latestInputTokensBySession` 是对称字段 —— 都来自
+   * `ModelRequestCompleted` SSE 事件的 per-call 字段。
+   *
+   * 用途：
+   *   - StreamingIndicator 显示"上一轮已完成 LLM 调用的精确 output"基线
+   *   - 当前正在流式 round 的 live output 用 estimateTokensText() 算，
+   *     这个值是 round 切换时上一轮的尾值
+   *
+   * 跟 `message.metrics.output_tokens` 的关键区别：
+   *   - message.metrics.output_tokens = AGNO run 级累加（一次 turn 内 N 次
+   *     LLM 调用 output 求和），会被合并放大
+   *   - latestOutputTokensBySession[id] = 最后一次 LLM 调用的精确 output
+   */
+  latestOutputTokensBySession: Record<string, number>;
+  /**
    * 每个 session 的"最新一次 LLM 调用的真实 model id"。
    *
    * 为什么需要这个：
@@ -318,6 +335,11 @@ interface ChatState {
    * value 为 null 表示清空（new session / 切换到没数据的 session）。
    */
   setLatestInputTokens: (sessionId: string, value: number | null) => void;
+  /**
+   * 同 setLatestInputTokens，但写 output_tokens。最新一次 LLM 调用的精确
+   * output（per-call，非 turn-level 累加）。value=null 表示清空。
+   */
+  setLatestOutputTokens: (sessionId: string, value: number | null) => void;
   /**
    * 写入 / 清空某个 session 的"最新一次 LLM 调用的真实 model id"。
    * value 为 null 表示清空（runner 给的是 null / 没数据时）。
@@ -586,6 +608,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   loadingHistoryBySession: {},
   loadedHistoryBySession: {},
   latestInputTokensBySession: {},
+  latestOutputTokensBySession: {},
   latestModelIdBySession: {},
 
   setSelectedAgent: (id, type = "agent") =>
@@ -600,6 +623,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
         next[sessionId] = value;
       }
       return { latestInputTokensBySession: next };
+    }),
+
+  setLatestOutputTokens: (sessionId, value) =>
+    set((s) => {
+      const next = { ...s.latestOutputTokensBySession };
+      if (value == null) {
+        delete next[sessionId];
+      } else {
+        next[sessionId] = value;
+      }
+      return { latestOutputTokensBySession: next };
     }),
 
   setLatestModelId: (sessionId, value) =>
@@ -1777,13 +1811,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
         // burst 里 50 token 只产生 1 次 set()，而不是 50 次。
         enqueueMessageUpdate(effectiveSessionId, message);
       },
-      onModelRequestCompleted: (inputTokens: number, modelId: string | null) => {
+      onModelRequestCompleted: (
+        inputTokens: number,
+        modelId: string | null,
+        outputTokens?: number,
+        _reasoningTokens?: number
+      ) => {
         // AGNO 在每次 LLM 调用完成后发的 per-call token 数 + 真实 model id。
         // 进度条直接用"最新一次"的值——它就是"当前 context size" 和
         // "当前 model"。modelId 用来查上下文窗口；agent.endpoint 给的 wrapper
         // 名（如 "OpenAiChat"）查不到任何条目。
+        // output_tokens 写入 latestOutputTokensBySession 作为上一轮精确基线；
+        // 当前正在流式 round 的 live output 由 StreamingIndicator 用
+        // estimateTokensText() 算（带 ~ 前缀）。
         get().setLatestInputTokens(effectiveSessionId, inputTokens);
         get().setLatestModelId(effectiveSessionId, modelId);
+        if (typeof outputTokens === "number") {
+          get().setLatestOutputTokens(effectiveSessionId, outputTokens);
+        }
       },
       onSubMessageCreated: (parentMessageId: string, sub: ChatMessage) => {
         // 占位实际上由 onMessageUpdate 第一次触发时 append；这里留作 hook 给未来的 UI/逻辑。
@@ -1947,10 +1992,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
         // 顶层或 sub 都用 updateAnyMessage
         get().updateAnyMessage(session, m.id, () => m);
       },
-      onModelRequestCompleted: (inputTokens: number, modelId: string | null) => {
+      onModelRequestCompleted: (
+        inputTokens: number,
+        modelId: string | null,
+        outputTokens?: number,
+        _reasoningTokens?: number
+      ) => {
         if (sessionId) {
           get().setLatestInputTokens(sessionId, inputTokens);
           get().setLatestModelId(sessionId, modelId);
+          if (typeof outputTokens === "number") {
+            get().setLatestOutputTokens(sessionId, outputTokens);
+          }
         }
       },
       onChunk: () => {},
@@ -2031,6 +2084,21 @@ export function useLatestInputTokens(sessionId: string | null): number | null {
   return useChatStore((s) => {
     if (!sessionId) return null;
     return s.latestInputTokensBySession[sessionId] ?? null;
+  });
+}
+
+/**
+ * 当前 session 最近一次 LLM 调用的 per-call output_tokens。
+ *
+ * 用途：StreamingIndicator 用作"上一轮已完成 round 的 output 精确基线"；
+ * 当前 round 的 live output 由 estimateTokensText() 给出估计值（带 ~ 前缀）。
+ * 没拿到（新建 session / 还在第一个 round 的流式阶段 / ModelRequestCompleted
+ * 没带 output_tokens）→ 返回 null，UI 直接显示 live 估计（不带基线）。
+ */
+export function useLatestOutputTokens(sessionId: string | null): number | null {
+  return useChatStore((s) => {
+    if (!sessionId) return null;
+    return s.latestOutputTokensBySession[sessionId] ?? null;
   });
 }
 
