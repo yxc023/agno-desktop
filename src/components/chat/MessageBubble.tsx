@@ -5,13 +5,15 @@ import {
   Bot,
   PanelRightOpen,
 } from "lucide-react";
-import { memo, useCallback, useState } from "react";
+import { memo, useCallback, useEffect, useState } from "react";
 import { cn, copyToClipboard, formatRelativeTime } from "@/lib/utils";
 import { Markdown } from "@/components/markdown/Markdown";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import type { ChatMessage, MessagePart } from "@/lib/message-types";
 import { useUIStore } from "@/stores/ui-store";
+import { useLatestInputTokens } from "@/stores/chat-store";
+import { estimateTokens } from "@/lib/estimate-tokens";
 import { MessageContent } from "./MessageContent";
 
 interface Props {
@@ -260,14 +262,13 @@ function MessageFooter({
         </Badge>
       )}
       {message.status === "streaming" && (
-        // Per-message 流式标识 — 仅 3 个脉冲点，不带 "streaming" 文字 / token 计数。
-        // 文字与计数统一在 ChatPanel header 的 StreamingIndicator 显示；这里只
-        // 负责"哪条 message 在被流式填充"的视觉锚点。
-        <span className="flex items-center gap-[3px]" aria-hidden>
-          <span className="h-1 w-1 rounded-full bg-accent animate-pulse-dot" />
-          <span className="h-1 w-1 rounded-full bg-accent animate-pulse-dot [animation-delay:0.15s]" />
-          <span className="h-1 w-1 rounded-full bg-accent animate-pulse-dot [animation-delay:0.3s]" />
-        </span>
+        // 流式状态显示在消息自己的 footer（"消息流的左下角"）— 三色脉冲点 +
+        // input tokens（精确）+ live output 估算 + elapsed。
+        // 数据来源：message.parts 是 chat-runner 在 SSE delta 时直接 mutate 的
+        // 数组（顶层 message ref 被 replaceInTree 重置过），每帧 parts[i].text
+        // 都是最新值；input tokens 来自 chat-store.latestInputTokensBySession。
+        // 这里不放"累计"output exact baseline —— 用户反馈不需要。
+        <StreamingBadge message={message} />
       )}
       {message.metrics?.total_tokens != null && (
         <span className="ml-auto flex items-center gap-2">
@@ -308,3 +309,77 @@ const SystemMessage = memo(function SystemMessage({ message }: Props) {
     </div>
   );
 });
+
+/**
+ * StreamingBadge — 在流式消息自己的 footer 里显示 token 计数 + elapsed。
+ *
+ * 之前这个 indicator 挂在 ChatPanel header（"右上角"），用户反馈
+ * "应该放在消息流的左下角的三个点旁边"。这里改为在 MessageBubble 的
+ * MessageFooter 内渲染 —— 只对 status === "streaming" 的那条消息实例化。
+ *
+ * 数据来源：
+ *   - input tokens: useLatestInputTokens(message.sessionId)
+ *   - live output: 直接扫当前 message.parts（chat-runner 每 chunk mutate，
+ *                  顶层 ref 被 replaceInTree 重置）
+ *   - elapsed: 本组件 mount 时启动 setInterval，unmount 时 cleanup
+ *
+ * 只显示 4 项；"累计" output exact baseline（latestOutputTokensBySession）
+ * 不显示——用户明确说不需要。
+ */
+function StreamingBadge({ message }: { message: ChatMessage }) {
+  const sessionId = message.sessionId ?? null;
+  const inputTokens = useLatestInputTokens(sessionId);
+
+  let streamingText = "";
+  for (const p of message.parts) {
+    if (p.type === "text") streamingText += p.text;
+  }
+  const liveOutput = estimateTokens(streamingText);
+
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    const startedAt = Date.now();
+    setElapsed(0);
+    const t = setInterval(() => {
+      setElapsed(Date.now() - startedAt);
+    }, 100);
+    return () => clearInterval(t);
+  }, []);
+
+  return (
+    <span
+      className="flex items-center gap-1.5 font-mono text-[10px] text-accent"
+      role="status"
+      aria-live="polite"
+    >
+      <span aria-hidden className="flex items-center gap-[3px]">
+        <span className="h-1 w-1 rounded-full bg-accent animate-pulse-dot" />
+        <span className="h-1 w-1 rounded-full bg-accent animate-pulse-dot [animation-delay:0.15s]" />
+        <span className="h-1 w-1 rounded-full bg-accent animate-pulse-dot [animation-delay:0.3s]" />
+      </span>
+      {inputTokens != null && (
+        <span className="tabular-nums" title="上一次 LLM 调用的 input tokens">
+          ↑ {inputTokens.toLocaleString()}
+        </span>
+      )}
+      <span
+        className="tabular-nums"
+        title="基于累积 text 长度的实时估算；最终精确值在 message footer"
+      >
+        ↓ ~{liveOutput.toLocaleString()}
+      </span>
+      <span className="tabular-nums text-accent/70">
+        {formatStreamingElapsed(elapsed)}
+      </span>
+    </span>
+  );
+}
+
+function formatStreamingElapsed(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  const s = ms / 1000;
+  if (s < 60) return `${s.toFixed(1)}s`;
+  const m = Math.floor(s / 60);
+  const sec = Math.floor(s % 60);
+  return `${m}m${sec.toString().padStart(2, "0")}s`;
+}
