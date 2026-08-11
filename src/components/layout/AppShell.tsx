@@ -10,6 +10,7 @@ import {
   Plus,
   PanelRightOpen,
   PanelRightClose,
+  Briefcase,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -51,6 +52,7 @@ const NAV: NavItem[] = [
   { to: "/chat", label: "对话", icon: MessageSquare, shortcut: "⌘1", description: "Chat with agents" },
   { to: "/instances", label: "实例", icon: Boxes, shortcut: "⌘2", description: "Manage AGNO instances" },
   { to: "/memory", label: "记忆", icon: Layers, shortcut: "⌘3", description: "User memories" },
+  { to: "/works", label: "工作", icon: Briefcase, description: "Works · experimental" },
   { to: "/settings", label: "设置", icon: SettingsIcon, shortcut: "⌘4", description: "App preferences" },
 ];
 

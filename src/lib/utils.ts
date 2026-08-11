@@ -6,7 +6,7 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 export function formatDate(input: number | string | Date): string {
-  const date = typeof input === "number" ? new Date(input * 1000) : new Date(input);
+  const date = typeof input === "number" ? new Date(input) : new Date(input);
   return date.toLocaleString("zh-CN", {
     year: "numeric",
     month: "2-digit",
@@ -16,8 +16,26 @@ export function formatDate(input: number | string | Date): string {
   });
 }
 
+export function formatTime(input: number | string | Date): string {
+  const date = typeof input === "number" ? new Date(input) : new Date(input);
+  const now = new Date();
+  const sameDay =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate();
+  if (sameDay) {
+    return date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+  }
+  return date.toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 export function formatRelativeTime(input: number | string | Date): string {
-  const date = typeof input === "number" ? new Date(input * 1000) : new Date(input);
+  const date = typeof input === "number" ? new Date(input) : new Date(input);
   const now = Date.now();
   const diffMs = now - date.getTime();
   const diffSec = Math.floor(diffMs / 1000);

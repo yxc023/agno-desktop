@@ -7,6 +7,7 @@ import { InstancesPage } from "@/pages/InstancesPage";
 import { MemoryPage } from "@/pages/MemoryPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { NotFoundPage } from "@/pages/NotFoundPage";
+import { WorksPage } from "@/pages/WorksPage";
 import { UpdateToast } from "@/components/common/UpdateToast";
 import { useEffectiveTheme } from "@/hooks/use-effective-theme";
 import { loadRemoteContextWindows } from "@/lib/model-context-windows";
@@ -41,6 +42,7 @@ export default function App() {
           <Route path="/chat" element={<ChatPage />} />
           <Route path="/instances" element={<InstancesPage />} />
           <Route path="/memory" element={<MemoryPage />} />
+          <Route path="/works" element={<WorksPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="*" element={<NotFoundPage />} />
         </Route>

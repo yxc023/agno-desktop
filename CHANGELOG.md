@@ -4,6 +4,22 @@ All notable changes to Agno Desktop are documented here. Versions follow [Semant
 
 ## Unreleased
 
+### Added
+- **Experimental `/works` page — requirement workspaces, off the Chat timeline.** New top-level route (`src/pages/WorksPage.tsx`, registered at `/works` in `src/App.tsx` and surfaced as the `Briefcase` nav entry in `src/components/layout/AppShell.tsx`) treats Requirements as first-class work units instead of chat sessions. UI is split across `src/components/works/`:
+  - **`requirement-list.tsx`** — left column listing 3 mock requirements with stage badge (`currentStage · stageLabelCN(stage)`), activity count, status, and assignees.
+  - **`requirement-detail.tsx`** — right column with header (title / status / assignees / repos / start-session button), compact `StageHeader` showing only `current stage · CN label · history · 推进 stage`, and 4 tabs in fixed order **Sessions · Activity · Git · Artifacts**.
+  - **`sessions-tab.tsx`** — 3 grouping sections (`running` / `ask_user · 需你介入` / `recent · 已结束`); each card shows externalRef + status, participants block, time grid (`开始时间 / 最近结束时间 / 消息数`), lifecycle bits (e.g. `↻ resumed after Yh pause`), and always-visible `进入对话` button plus status-specific actions. New `ask_user` status renders with warning tone + `Hand` icon + `介入回答` button.
+  - **`activity-tab.tsx`** — discrete-event timeline (human comment / agent-note / stage-transition). Time column is fixed-width right-aligned (`w-16` + `whitespace-nowrap`) so all rows end at the same x position; absolute time on top (`HH:MM` same day, `MM/DD HH:MM` cross-day), relative time below. No dots / rail. Inline reply + filter tabs (`全部 / 评论 / stage / note`) + write-comment input.
+  - **`stage-header.tsx`** — minimal stage display + transition button (opens inline picker for target stage, reason input, actor select); clicking history toggles a compact transition list. Description / suggested-agent rows from `STAGE_DEFINITIONS` deliberately omitted per user feedback — the page is the work surface, not a docs page.
+  - **`start-session-dialog.tsx`** — single entry from requirement header. Two grouped agent lists (`suggested by stage` from `STAGE_DEFINITIONS[currentStage].suggestedAgents` marked `recommended`, `from assignees`); multi-select chips with binding preview before launch; primary button carries selection count badge.
+  - **`git-tab.tsx`** — top project filter pill row (`全部 N · project1 N · project2 N`) computed from `requirement.mrs + requirement.branches` last path segment; selecting a project filters MRs and branches (commits stay unfiltered as global timeline). Section counts show `filtered / total` when active.
+  - **`artifacts-tab.tsx`** — renamed from `documents-tab`; list + preview drawer for process documents.
+- **New `requirements-store.ts`** — Zustand in-memory store. State is seeded from `src/components/works/mock-requirements.ts` (3 reqs, 9 sessions, mixed activities). Exposes `transitionStage(reqId, { toStage, actorType, actorName, reason? })`, `addComment(reqId, content, parentId?)`, `toggleResolveComment(reqId, activityId)`. No localStorage persistence — refreshed on reload — the page is explicitly experimental and AGNO-server backed is the future direction.
+- **New `formatTime()` helper in `src/lib/utils.ts`** — same-day `HH:MM`, cross-day `MM/DD HH:MM`. Companion to existing `formatRelativeTime`. **Bug fix bundled in the same commit:** `formatRelativeTime` and `formatDate` previously multiplied numeric inputs by 1000 assuming Unix seconds, but mock data and AGNO timestamps are millisecond-based, making every relative-time display fall through to `"刚刚"` regardless of age. Both helpers now treat numeric inputs as ms (matching `formatTime`'s convention).
+
+### Notes
+- Page is intentionally demo-only: mock data is shipped in `mock-requirements.ts`; the store is in-memory. The design doc (`docs/plans/2026-08-10-requirement-workspaces-design.md`) records the Q1-Q4 decisions made before implementation (filesystem-backed requirement metadata, manually-specified session bindings, demo data shape, multi-repo support) so a future AGNO-server wiring pass has a north star.
+
 ## [0.0.12] - 2026-08-07
 
 ### Added
