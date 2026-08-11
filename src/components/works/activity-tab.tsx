@@ -25,7 +25,6 @@ import type {
 import { useRequirementsStore } from "@/stores/requirements-store";
 import { AuthorChip, PlatformBadge } from "./badges";
 import { stageLabelCN } from "./selectors";
-import { SESSIONS } from "./mock-requirements";
 
 type Filter = "all" | "comment" | "stage-transition" | "agent-note";
 
@@ -40,9 +39,9 @@ interface ActivityTabProps {
   requirement: Requirement;
 }
 
-function findSessionTitle(ref?: string): string | undefined {
+function findSessionTitle(req: Requirement, ref?: string): string | undefined {
   if (!ref) return undefined;
-  return SESSIONS.find((s) => s.id === ref)?.title;
+  return req.sessions.find((s) => s.id === ref)?.title;
 }
 
 export function ActivityTab({ requirement }: ActivityTabProps) {
@@ -161,9 +160,9 @@ function ActivityItem({
     case "comment":
       return <CommentRow activity={activity} requirement={requirement} />;
     case "stage-transition":
-      return <StageTransitionRow activity={activity} />;
+      return <StageTransitionRow activity={activity} requirement={requirement} />;
     case "agent-note":
-      return <AgentNoteRow activity={activity} />;
+      return <AgentNoteRow activity={activity} requirement={requirement} />;
   }
 }
 
@@ -180,7 +179,7 @@ function CommentRow({
   const [replyText, setReplyText] = useState("");
   const isReply = !!activity.parentId;
   const isHuman = activity.authorType === "human";
-  const sessionTitle = findSessionTitle(activity.sessionRef);
+  const sessionTitle = findSessionTitle(requirement, activity.sessionRef);
 
   return (
     <div
@@ -281,11 +280,13 @@ function CommentRow({
 
 function StageTransitionRow({
   activity,
+  requirement,
 }: {
   activity: StageTransitionActivity;
+  requirement: Requirement;
 }) {
   const isAgent = activity.authorType === "agent";
-  const sessionTitle = findSessionTitle(activity.sessionRef);
+  const sessionTitle = findSessionTitle(requirement, activity.sessionRef);
 
   return (
     <div className="rounded-md border border-info/30 bg-info/[0.04] px-3 py-2">
@@ -329,10 +330,12 @@ function StageTransitionRow({
 
 function AgentNoteRow({
   activity,
+  requirement,
 }: {
   activity: Extract<Activity, { kind: "agent-note" }>;
+  requirement: Requirement;
 }) {
-  const sessionTitle = findSessionTitle(activity.sessionRef);
+  const sessionTitle = findSessionTitle(requirement, activity.sessionRef);
   return (
     <div className="rounded-md border border-accent/25 bg-accent/[0.03] px-3 py-2">
       <div className="flex items-start gap-2">

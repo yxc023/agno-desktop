@@ -1,7 +1,6 @@
 import type {
   AgentPlatform,
   Requirement,
-  Session,
   SessionStatus,
   StageDefinition,
   StageKind,
@@ -82,182 +81,7 @@ export const STAGE_DEFINITIONS: Record<StageKind, StageDefinition> = {
 };
 
 // ============================================================================
-// SESSIONS
-// ============================================================================
-
-export const SESSIONS: Session[] = [
-  // REQ-234
-  {
-    id: "sess-234-plan-1",
-    requirementId: "REQ-234",
-    platform: "claude-code",
-    externalRef: "cc-7c2b9d",
-    title: "梳理 OTLP 架构选项",
-    status: "completed",
-    participants: [
-      { kind: "agent", name: "Claude Code", platform: "claude-code", role: "primary" },
-      { kind: "human", name: "Alice", role: "reviewer" },
-    ],
-    startedAt: now - 3 * day,
-    endedAt: now - 2 * day - 6 * hour,
-    lastActivityAt: now - 2 * day - 6 * hour,
-    toolCount: 3,
-    messageCount: 14,
-    durationMs: 18 * minute,
-  },
-  {
-    id: "sess-234-plan-2",
-    requirementId: "REQ-234",
-    platform: "opencode",
-    externalRef: "oc-92f0c4",
-    title: "扫 codebase 找现有 instrumentation 入口",
-    status: "completed",
-    participants: [
-      { kind: "agent", name: "opencode", platform: "opencode", role: "primary" },
-    ],
-    startedAt: now - 2 * day - 6 * hour,
-    endedAt: now - 2 * day - 4 * hour,
-    lastActivityAt: now - 2 * day - 4 * hour,
-    toolCount: 8,
-    messageCount: 28,
-    durationMs: 45 * minute,
-  },
-  {
-    id: "sess-234-do-1",
-    requirementId: "REQ-234",
-    platform: "opencode",
-    externalRef: "oc-a3f9e1",
-    title: "实现 otel middleware 并接入 router",
-    status: "running",
-    participants: [
-      { kind: "agent", name: "opencode", platform: "opencode", role: "primary" },
-      { kind: "human", name: "Alice", role: "reviewer" },
-      { kind: "agent", name: "Claude Code", platform: "claude-code", role: "co-observer" },
-    ],
-    startedAt: now - 3 * hour,
-    pausedAt: now - 2 * hour,
-    resumedAt: now - 1 * hour,
-    lastActivityAt: now - 18 * minute,
-    toolCount: 6,
-    messageCount: 52,
-    durationMs: 1 * hour + 42 * minute,
-  },
-  {
-    id: "sess-234-do-2",
-    requirementId: "REQ-234",
-    platform: "agno",
-    externalRef: "agno-sess-302",
-    title: "team: pr-review-team 实时 review 当前 diff",
-    status: "running",
-    participants: [
-      { kind: "agent", name: "pr-review-team", platform: "agno", role: "primary" },
-      { kind: "agent", name: "diff-fetcher", platform: "agno", role: "team-member" },
-      { kind: "agent", name: "summarizer", platform: "agno", role: "team-member" },
-      { kind: "human", name: "Alice", role: "owner" },
-    ],
-    startedAt: now - 22 * minute,
-    lastActivityAt: now - 22 * minute,
-    toolCount: 3,
-    messageCount: 16,
-    durationMs: 22 * minute,
-  },
-  {
-    id: "sess-234-do-3",
-    requirementId: "REQ-234",
-    platform: "claude-code",
-    externalRef: "cc-4e8b73",
-    title: "写 sampling strategy rationale",
-    status: "completed",
-    participants: [
-      { kind: "agent", name: "Claude Code", platform: "claude-code", role: "primary" },
-    ],
-    startedAt: now - 7 * hour,
-    endedAt: now - 6 * hour,
-    lastActivityAt: now - 6 * hour,
-    toolCount: 2,
-    messageCount: 8,
-    durationMs: 12 * minute,
-  },
-  // REQ-198
-  {
-    id: "sess-198-do-1",
-    requirementId: "REQ-198",
-    platform: "agno",
-    externalRef: "agno-sess-118",
-    title: "team: report-pipeline 拉 Notion 数据 + 出报告",
-    status: "completed",
-    participants: [
-      { kind: "agent", name: "report-pipeline", platform: "agno", role: "primary" },
-      { kind: "agent", name: "data-collector", platform: "agno", role: "team-member" },
-      { kind: "agent", name: "analyst", platform: "agno", role: "team-member" },
-      { kind: "human", name: "Bob", role: "owner" },
-    ],
-    startedAt: now - 13 * day,
-    endedAt: now - 5 * day,
-    lastActivityAt: now - 5 * day,
-    toolCount: 24,
-    messageCount: 86,
-    durationMs: 6 * hour,
-  },
-  {
-    id: "sess-198-check-1",
-    requirementId: "REQ-198",
-    platform: "claude-code",
-    externalRef: "cc-f4b1e7",
-    title: "polish recommendations section",
-    status: "completed",
-    participants: [
-      { kind: "agent", name: "Claude Code", platform: "claude-code", role: "primary" },
-      { kind: "human", name: "Bob", role: "reviewer" },
-    ],
-    startedAt: now - 3 * day,
-    endedAt: now - 3 * day + 30 * minute,
-    lastActivityAt: now - 3 * day,
-    toolCount: 4,
-    messageCount: 18,
-    durationMs: 25 * minute,
-  },
-  // REQ-205
-  {
-    id: "sess-205-check-1",
-    requirementId: "REQ-205",
-    platform: "opencode",
-    externalRef: "oc-2a8c4f",
-    title: "扫 zh-CN ↔ en-US 不一致 + 写 audit 报告",
-    status: "ask_user",
-    participants: [
-      { kind: "agent", name: "opencode", platform: "opencode", role: "primary" },
-      { kind: "human", name: "Carol", role: "owner" },
-    ],
-    startedAt: now - 3 * day,
-    pausedAt: now - 38 * minute,
-    lastActivityAt: now - 38 * minute,
-    toolCount: 11,
-    messageCount: 47,
-    durationMs: 4 * hour,
-  },
-  {
-    id: "sess-205-check-2",
-    requirementId: "REQ-205",
-    platform: "claude-code",
-    externalRef: "cc-31d9af",
-    title: "草拟术语翻译候选",
-    status: "ask_user",
-    participants: [
-      { kind: "agent", name: "Claude Code", platform: "claude-code", role: "primary" },
-      { kind: "human", name: "Carol", role: "owner" },
-    ],
-    startedAt: now - 2 * day,
-    pausedAt: now - 1 * day,
-    lastActivityAt: now - 1 * day,
-    toolCount: 2,
-    messageCount: 12,
-    durationMs: 8 * minute,
-  },
-];
-
-// ============================================================================
-// REQUIREMENTS
+// REQUIREMENTS（含 sessions 子数组）
 // ============================================================================
 
 export const REQUIREMENTS: Requirement[] = [
@@ -552,6 +376,99 @@ export const REQUIREMENTS: Requirement[] = [
         filesChanged: ["tests/tracing/otel.spec.ts"],
       },
     ],
+    sessions: [
+      {
+        id: "sess-234-plan-1",
+        requirementId: "REQ-234",
+        platform: "claude-code",
+        externalRef: "cc-7c2b9d",
+        title: "梳理 OTLP 架构选项",
+        status: "completed",
+        participants: [
+          { kind: "agent", name: "Claude Code", platform: "claude-code", role: "primary" },
+          { kind: "human", name: "Alice", role: "reviewer" },
+        ],
+        startedAt: now - 3 * day,
+        endedAt: now - 2 * day - 6 * hour,
+        lastActivityAt: now - 2 * day - 6 * hour,
+        toolCount: 3,
+        messageCount: 14,
+        durationMs: 18 * minute,
+      },
+      {
+        id: "sess-234-plan-2",
+        requirementId: "REQ-234",
+        platform: "opencode",
+        externalRef: "oc-92f0c4",
+        title: "扫 codebase 找现有 instrumentation 入口",
+        status: "completed",
+        participants: [
+          { kind: "agent", name: "opencode", platform: "opencode", role: "primary" },
+        ],
+        startedAt: now - 2 * day - 6 * hour,
+        endedAt: now - 2 * day - 4 * hour,
+        lastActivityAt: now - 2 * day - 4 * hour,
+        toolCount: 8,
+        messageCount: 28,
+        durationMs: 45 * minute,
+      },
+      {
+        id: "sess-234-do-1",
+        requirementId: "REQ-234",
+        platform: "opencode",
+        externalRef: "oc-a3f9e1",
+        title: "实现 otel middleware 并接入 router",
+        status: "running",
+        participants: [
+          { kind: "agent", name: "opencode", platform: "opencode", role: "primary" },
+          { kind: "human", name: "Alice", role: "reviewer" },
+          { kind: "agent", name: "Claude Code", platform: "claude-code", role: "co-observer" },
+        ],
+        startedAt: now - 3 * hour,
+        pausedAt: now - 2 * hour,
+        resumedAt: now - 1 * hour,
+        lastActivityAt: now - 18 * minute,
+        toolCount: 6,
+        messageCount: 52,
+        durationMs: 1 * hour + 42 * minute,
+      },
+      {
+        id: "sess-234-do-2",
+        requirementId: "REQ-234",
+        platform: "agno",
+        externalRef: "agno-sess-302",
+        title: "team: pr-review-team 实时 review 当前 diff",
+        status: "running",
+        participants: [
+          { kind: "agent", name: "pr-review-team", platform: "agno", role: "primary" },
+          { kind: "agent", name: "diff-fetcher", platform: "agno", role: "team-member" },
+          { kind: "agent", name: "summarizer", platform: "agno", role: "team-member" },
+          { kind: "human", name: "Alice", role: "owner" },
+        ],
+        startedAt: now - 22 * minute,
+        lastActivityAt: now - 22 * minute,
+        toolCount: 3,
+        messageCount: 16,
+        durationMs: 22 * minute,
+      },
+      {
+        id: "sess-234-do-3",
+        requirementId: "REQ-234",
+        platform: "claude-code",
+        externalRef: "cc-4e8b73",
+        title: "写 sampling strategy rationale",
+        status: "completed",
+        participants: [
+          { kind: "agent", name: "Claude Code", platform: "claude-code", role: "primary" },
+        ],
+        startedAt: now - 7 * hour,
+        endedAt: now - 6 * hour,
+        lastActivityAt: now - 6 * hour,
+        toolCount: 2,
+        messageCount: 8,
+        durationMs: 12 * minute,
+      },
+    ],
   },
 
   // ---------------------------------------------------------------- REQ-198
@@ -727,6 +644,46 @@ export const REQUIREMENTS: Requirement[] = [
         filesChanged: ["reports/q4-2026.md"],
       },
     ],
+    sessions: [
+      {
+        id: "sess-198-do-1",
+        requirementId: "REQ-198",
+        platform: "agno",
+        externalRef: "agno-sess-118",
+        title: "team: report-pipeline 拉 Notion 数据 + 出报告",
+        status: "completed",
+        participants: [
+          { kind: "agent", name: "report-pipeline", platform: "agno", role: "primary" },
+          { kind: "agent", name: "data-collector", platform: "agno", role: "team-member" },
+          { kind: "agent", name: "analyst", platform: "agno", role: "team-member" },
+          { kind: "human", name: "Bob", role: "owner" },
+        ],
+        startedAt: now - 13 * day,
+        endedAt: now - 5 * day,
+        lastActivityAt: now - 5 * day,
+        toolCount: 24,
+        messageCount: 86,
+        durationMs: 6 * hour,
+      },
+      {
+        id: "sess-198-check-1",
+        requirementId: "REQ-198",
+        platform: "claude-code",
+        externalRef: "cc-f4b1e7",
+        title: "polish recommendations section",
+        status: "completed",
+        participants: [
+          { kind: "agent", name: "Claude Code", platform: "claude-code", role: "primary" },
+          { kind: "human", name: "Bob", role: "reviewer" },
+        ],
+        startedAt: now - 3 * day,
+        endedAt: now - 3 * day + 30 * minute,
+        lastActivityAt: now - 3 * day,
+        toolCount: 4,
+        messageCount: 18,
+        durationMs: 25 * minute,
+      },
+    ],
   },
 
   // ---------------------------------------------------------------- REQ-205
@@ -847,5 +804,753 @@ export const REQUIREMENTS: Requirement[] = [
         filesChanged: ["docs/02-audit-report.md"],
       },
     ],
+    sessions: [
+      {
+        id: "sess-205-check-1",
+        requirementId: "REQ-205",
+        platform: "opencode",
+        externalRef: "oc-2a8c4f",
+        title: "扫 zh-CN ↔ en-US 不一致 + 写 audit 报告",
+        status: "ask_user",
+        participants: [
+          { kind: "agent", name: "opencode", platform: "opencode", role: "primary" },
+          { kind: "human", name: "Carol", role: "owner" },
+        ],
+        startedAt: now - 3 * day,
+        pausedAt: now - 38 * minute,
+        lastActivityAt: now - 38 * minute,
+        toolCount: 11,
+        messageCount: 47,
+        durationMs: 4 * hour,
+      },
+      {
+        id: "sess-205-check-2",
+        requirementId: "REQ-205",
+        platform: "claude-code",
+        externalRef: "cc-31d9af",
+        title: "草拟术语翻译候选",
+        status: "ask_user",
+        participants: [
+          { kind: "agent", name: "Claude Code", platform: "claude-code", role: "primary" },
+          { kind: "human", name: "Carol", role: "owner" },
+        ],
+        startedAt: now - 2 * day,
+        pausedAt: now - 1 * day,
+        lastActivityAt: now - 1 * day,
+        toolCount: 2,
+        messageCount: 12,
+        durationMs: 8 * minute,
+      },
+    ],
   },
 ];
+
+// ============================================================================
+// DEMO FLOW —— 一键创建走完 plan → do → check → fix → check → deliver
+// ============================================================================
+//
+// 7 步用户手动触发，每步把对应的 session / activity / doc / git 信息追加到 req。
+// 时间锚点 T0 = req.createdAt，所有 step 共享一个时间轴。
+// ============================================================================
+
+export const DEMO_STEPS = [
+  { id: 1, key: "create", label: "新建需求", icon: "plus" },
+  { id: 2, key: "plan", label: "plan agent 分析", icon: "plan" },
+  { id: 3, key: "build", label: "build agent 实施", icon: "build" },
+  { id: 4, key: "validate", label: "validation 验证", icon: "check" },
+  { id: 5, key: "fix", label: "build 修复", icon: "wrench" },
+  { id: 6, key: "revalidate", label: "复验", icon: "check" },
+  { id: 7, key: "deploy", label: "deploy 部署", icon: "rocket" },
+] as const;
+
+export type DemoStepId = 1 | 2 | 3 | 4 | 5 | 6 | 7;
+
+function actId(id: string, label: string): string {
+  return `act-${id}-${label}`;
+}
+
+function sessIdFn(id: string, label: string): string {
+  return `sess-${id}-${label}`;
+}
+
+export function createEmptyDemoRequirement(seq: number): Requirement {
+  const id = `REQ-${300 + seq}`;
+  const createdAt = Date.now();
+  return {
+    id,
+    title: "用户登录与会话管理",
+    description:
+      "支持邮箱 / 手机号双登录方式；JWT 刷新；跨设备会话同步。要求：刷新令牌轮换无 race；多端踢出会话列表同步生效。",
+    status: "active",
+    createdAt,
+    updatedAt: createdAt,
+    assignees: [
+      { kind: "human", name: "Alice", avatar: "A" },
+      { kind: "agent", name: "plan-agent", platform: "agno" },
+      { kind: "agent", name: "build-agent", platform: "claude-code" },
+      { kind: "agent", name: "validation-agent", platform: "opencode" },
+      { kind: "agent", name: "deploy-agent", platform: "codex" },
+    ],
+    repos: [
+      "/Users/alice/work/backend-service",
+      "/Users/alice/work/web-app",
+    ],
+    currentStage: "plan",
+    activities: [
+      {
+        id: actId(id, "stage-init"),
+        kind: "stage-transition",
+        requirementId: id,
+        at: createdAt,
+        fromStage: null,
+        toStage: "plan",
+        authorType: "human",
+        authorName: "Alice",
+        reason: "需求已澄清，启动 plan 阶段",
+      },
+      {
+        id: actId(id, "alice-create"),
+        kind: "comment",
+        requirementId: id,
+        at: createdAt + 5 * minute,
+        authorType: "human",
+        authorName: "Alice",
+        content: "新建需求，待 plan agent 分析。",
+      },
+    ],
+    documents: [],
+    branches: [],
+    mrs: [],
+    commits: [],
+    sessions: [],
+  };
+}
+
+export function applyDemoStep(req: Requirement, step: DemoStepId): Requirement {
+  switch (step) {
+    case 1:
+      return req;
+    case 2:
+      return applyPlanStep(req);
+    case 3:
+      return applyBuildStep(req);
+    case 4:
+      return applyValidateStep(req);
+    case 5:
+      return applyFixStep(req);
+    case 6:
+      return applyRevalidateStep(req);
+    case 7:
+      return applyDeployStep(req);
+  }
+}
+
+// ---- step 2: plan agent 分析 ----
+function applyPlanStep(req: Requirement): Requirement {
+  const id = req.id;
+  const T0 = req.createdAt;
+  const planEnd = T0 + 90 * minute;
+
+  return {
+    ...req,
+    updatedAt: planEnd,
+    sessions: [
+      ...req.sessions,
+      {
+        id: sessIdFn(id, "plan"),
+        requirementId: id,
+        platform: "agno",
+        externalRef: "agno-sess-512",
+        title: "调研 + 设计 + 用户故事",
+        status: "completed",
+        participants: [
+          { kind: "agent", name: "plan-agent", platform: "agno", role: "primary" },
+          { kind: "human", name: "Alice", role: "owner" },
+        ],
+        startedAt: T0 + 30 * minute,
+        endedAt: planEnd,
+        lastActivityAt: planEnd,
+        toolCount: 6,
+        messageCount: 18,
+        durationMs: 60 * minute,
+      },
+    ],
+    documents: [
+      ...req.documents,
+      {
+        filePath: "docs/01-research-auth-options.md",
+        title: "调研 · 登录与 token 方案对比",
+        excerpt:
+          "对比 session-cookie vs JWT + refresh 两条路径。推荐 JWT：跨端友好，rotation refresh 解决长会话安全。",
+        kind: "research",
+        stage: "plan",
+        lastEditedBy: "agno",
+        lastEditedByName: "plan-agent",
+        lastEditedAt: planEnd - 20 * minute,
+        sizeBytes: 8_400,
+        lineCount: 218,
+      },
+      {
+        filePath: "docs/02-design-auth-flow.md",
+        title: "方案 · JWT + 短 access + 旋转 refresh",
+        excerpt:
+          "access TTL 15min，refresh TTL 30d；refresh rotation 单飞 (single-flight)；多端会话踢出走 SSE 通知。",
+        kind: "design",
+        stage: "plan",
+        lastEditedBy: "agno",
+        lastEditedByName: "plan-agent",
+        lastEditedAt: planEnd - 5 * minute,
+        sizeBytes: 12_800,
+        lineCount: 332,
+      },
+      {
+        filePath: "docs/03-user-stories.md",
+        title: "用户故事 · 登录与会话管理",
+        excerpt:
+          "6 个 story：邮箱登录 / 手机号登录 / refresh / 跨端踢出 / 退出 / 设备管理。AC 已列。",
+        kind: "spec",
+        stage: "plan",
+        lastEditedBy: "agno",
+        lastEditedByName: "plan-agent",
+        lastEditedAt: planEnd,
+        sizeBytes: 6_200,
+        lineCount: 168,
+      },
+    ],
+    activities: [
+      {
+        id: actId(id, "plan-note"),
+        kind: "agent-note",
+        requirementId: id,
+        at: planEnd,
+        authorType: "agent",
+        authorName: "plan-agent",
+        authorPlatform: "agno",
+        content:
+          "调研 + 方案 + 用户故事 三份文档已产出。推荐方案：JWT + 短 access + 旋转 refresh。",
+        sessionRef: sessIdFn(id, "plan"),
+      },
+      ...req.activities,
+    ],
+  };
+}
+
+// ---- step 3: build agent 实施 ----
+function applyBuildStep(req: Requirement): Requirement {
+  const id = req.id;
+  const backendRepo = "/Users/alice/work/backend-service";
+  const frontendRepo = "/Users/alice/work/web-app";
+  const T0 = req.createdAt;
+  const doStart = T0 + 3 * hour;
+  const doEnd = T0 + 8 * hour;
+
+  return {
+    ...req,
+    updatedAt: doEnd + 30 * minute,
+    currentStage: "check",
+    sessions: [
+      ...req.sessions,
+      {
+        id: sessIdFn(id, "build-1"),
+        requirementId: id,
+        platform: "claude-code",
+        externalRef: "cc-8f3a91",
+        title: "实施：后端 login/refresh + 前端 login form",
+        status: "completed",
+        participants: [
+          { kind: "agent", name: "build-agent", platform: "claude-code", role: "primary" },
+          { kind: "human", name: "Alice", role: "reviewer" },
+        ],
+        startedAt: doStart,
+        endedAt: doEnd,
+        lastActivityAt: doEnd,
+        toolCount: 12,
+        messageCount: 42,
+        durationMs: 5 * hour,
+      },
+    ],
+    branches: [
+      ...req.branches,
+      {
+        repoPath: frontendRepo,
+        name: `req/${id}/feat/login-ui`,
+        lastCommitSha: short("b91c4f8a2e30"),
+        aheadBy: 2,
+        behindBy: 0,
+        authorType: "agent",
+        authorPlatform: "claude-code",
+        authorName: "build-agent",
+        updatedAt: doEnd,
+        externalUrl: `https://git.internal/web-app/-/tree/req/${id}/feat/login-ui`,
+      },
+      {
+        repoPath: backendRepo,
+        name: `req/${id}/feat/auth-backend`,
+        lastCommitSha: short("5c1d9f4a8e72"),
+        aheadBy: 3,
+        behindBy: 0,
+        authorType: "agent",
+        authorPlatform: "claude-code",
+        authorName: "build-agent",
+        updatedAt: doEnd,
+        externalUrl: `https://git.internal/backend-service/-/tree/req/${id}/feat/auth-backend`,
+      },
+    ],
+    mrs: [
+      ...req.mrs,
+      {
+        repoPath: frontendRepo,
+        iid: 202,
+        title: "feat(ui): login form + session sync across devices",
+        status: "open",
+        branch: `req/${id}/feat/login-ui`,
+        targetBranch: "main",
+        authorType: "agent",
+        authorPlatform: "claude-code",
+        authorName: "build-agent",
+        externalUrl: `https://git.internal/web-app/-/merge_requests/202`,
+        updatedAt: doEnd,
+      },
+      {
+        repoPath: backendRepo,
+        iid: 201,
+        title: "feat(auth): login + refresh + logout endpoints",
+        status: "open",
+        branch: `req/${id}/feat/auth-backend`,
+        targetBranch: "main",
+        authorType: "agent",
+        authorPlatform: "claude-code",
+        authorName: "build-agent",
+        externalUrl: `https://git.internal/backend-service/-/merge_requests/201`,
+        updatedAt: doEnd,
+      },
+    ],
+    commits: [
+      ...req.commits,
+      {
+        sha: "2b8e6a1",
+        repoPath: frontendRepo,
+        message: "feat(ui): login form + session sync UI",
+        authorType: "agent",
+        authorPlatform: "claude-code",
+        authorName: "build-agent",
+        timestamp: doEnd - 45 * minute,
+        filesChanged: ["src/views/Login.tsx", "src/hooks/use-session-sync.ts"],
+      },
+      {
+        sha: "5c1d9f4",
+        repoPath: backendRepo,
+        message: "feat(auth): login + refresh + logout endpoints",
+        authorType: "agent",
+        authorPlatform: "claude-code",
+        authorName: "build-agent",
+        timestamp: doEnd - 30 * minute,
+        filesChanged: ["src/auth/login.ts", "src/auth/refresh.ts", "src/auth/logout.ts"],
+      },
+      {
+        sha: "8e3a720",
+        repoPath: backendRepo,
+        message: "test(auth): integration tests for login + refresh + logout",
+        authorType: "agent",
+        authorPlatform: "claude-code",
+        authorName: "build-agent",
+        timestamp: doEnd,
+        filesChanged: ["tests/auth/integration.spec.ts", "tests/auth/rotation.spec.ts"],
+      },
+    ],
+    activities: [
+      {
+        id: actId(id, "stage-do"),
+        kind: "stage-transition",
+        requirementId: id,
+        at: T0 + 2 * hour + 30 * minute,
+        fromStage: "plan",
+        toStage: "do",
+        authorType: "human",
+        authorName: "Alice",
+        reason: "方案已定稿，转 do 实施",
+      },
+      {
+        id: actId(id, "build1-note"),
+        kind: "agent-note",
+        requirementId: id,
+        at: doEnd,
+        authorType: "agent",
+        authorName: "build-agent",
+        authorPlatform: "claude-code",
+        content:
+          "实施完成：后端 login/refresh/logout 3 接口 + 前端 login form + 跨端会话同步 UI；3 commits / 2 branches / 2 MRs。",
+        sessionRef: sessIdFn(id, "build-1"),
+      },
+      {
+        id: actId(id, "stage-check-1"),
+        kind: "stage-transition",
+        requirementId: id,
+        at: doEnd + 30 * minute,
+        fromStage: "do",
+        toStage: "check",
+        authorType: "human",
+        authorName: "Alice",
+        reason: "实施完成，启动验证",
+      },
+      ...req.activities,
+    ],
+  };
+}
+
+// ---- step 4: validation 验证（初验，发现 2 个问题）----
+function applyValidateStep(req: Requirement): Requirement {
+  const id = req.id;
+  const T0 = req.createdAt;
+  const check1Start = T0 + 1 * day + 2 * hour;
+  const check1End = check1Start + 50 * minute;
+
+  return {
+    ...req,
+    updatedAt: check1End + 5 * minute,
+    currentStage: "do",
+    sessions: [
+      ...req.sessions,
+      {
+        id: sessIdFn(id, "validate-1"),
+        requirementId: id,
+        platform: "opencode",
+        externalRef: "oc-9c2b7e",
+        title: "初验：跑集成测试 + 边界用例",
+        status: "completed",
+        participants: [
+          { kind: "agent", name: "validation-agent", platform: "opencode", role: "primary" },
+          { kind: "human", name: "Alice", role: "owner" },
+        ],
+        startedAt: check1Start,
+        endedAt: check1End,
+        lastActivityAt: check1End,
+        toolCount: 4,
+        messageCount: 16,
+        durationMs: 50 * minute,
+      },
+    ],
+    documents: [
+      ...req.documents,
+      {
+        filePath: "docs/04-validation-report-v1.md",
+        title: "验证报告 v1 · 2 处问题",
+        excerpt:
+          "集成测试 24 用例 23 通过 / 1 偶发；边界用例 12 通过 / 1 偶发。两处问题：① refresh rotation race ② 401 重定向丢 query。",
+        kind: "report",
+        stage: "check",
+        lastEditedBy: "opencode",
+        lastEditedByName: "validation-agent",
+        lastEditedAt: check1End,
+        sizeBytes: 9_600,
+        lineCount: 248,
+      },
+    ],
+    activities: [
+      {
+        id: actId(id, "validate-issue-comment"),
+        kind: "comment",
+        requirementId: id,
+        at: check1End - 5 * minute,
+        authorType: "agent",
+        authorName: "validation-agent",
+        authorPlatform: "opencode",
+        content:
+          "@Alice 发现 2 个问题：① refresh token 在并发场景下偶发 rotation race；② 401 重定向丢失 query 参数。建议 build 修复后复验。",
+        sessionRef: sessIdFn(id, "validate-1"),
+      },
+      {
+        id: actId(id, "validate1-note"),
+        kind: "agent-note",
+        requirementId: id,
+        at: check1End,
+        authorType: "agent",
+        authorName: "validation-agent",
+        authorPlatform: "opencode",
+        content: "初验完成，详见 docs/04-validation-report-v1.md（2 处问题需要修复）。",
+        sessionRef: sessIdFn(id, "validate-1"),
+      },
+      {
+        id: actId(id, "stage-fix"),
+        kind: "stage-transition",
+        requirementId: id,
+        at: check1End + 5 * minute,
+        fromStage: "check",
+        toStage: "do",
+        authorType: "human",
+        authorName: "Alice",
+        reason: "初验发现 2 问题，转回 do 修复",
+      },
+      ...req.activities,
+    ],
+  };
+}
+
+// ---- step 5: build 修复 ----
+function applyFixStep(req: Requirement): Requirement {
+  const id = req.id;
+  const backendRepo = "/Users/alice/work/backend-service";
+  const frontendRepo = "/Users/alice/work/web-app";
+  const T0 = req.createdAt;
+  const fixStart = T0 + 1 * day + 3 * hour;
+  const fixEnd = T0 + 1 * day + 5 * hour + 30 * minute;
+
+  return {
+    ...req,
+    updatedAt: fixEnd,
+    currentStage: "check",
+    sessions: [
+      ...req.sessions,
+      {
+        id: sessIdFn(id, "build-2"),
+        requirementId: id,
+        platform: "claude-code",
+        externalRef: "cc-7d1e3a",
+        title: "修复：refresh token rotation race + 401 重定向",
+        status: "completed",
+        participants: [
+          { kind: "agent", name: "build-agent", platform: "claude-code", role: "primary" },
+          { kind: "human", name: "Alice", role: "reviewer" },
+        ],
+        startedAt: fixStart,
+        endedAt: fixEnd,
+        lastActivityAt: fixEnd,
+        toolCount: 7,
+        messageCount: 26,
+        durationMs: 2 * hour + 30 * minute,
+      },
+    ],
+    commits: [
+      ...req.commits,
+      {
+        sha: "b91c4f8",
+        repoPath: frontendRepo,
+        message: "fix(ui): preserve query on 401 redirect",
+        authorType: "agent",
+        authorPlatform: "claude-code",
+        authorName: "build-agent",
+        timestamp: fixEnd - 30 * minute,
+        filesChanged: ["src/lib/auth-redirect.ts"],
+      },
+      {
+        sha: "3a7f2c1",
+        repoPath: backendRepo,
+        message: "fix(auth): single-flight refresh token rotation",
+        authorType: "agent",
+        authorPlatform: "claude-code",
+        authorName: "build-agent",
+        timestamp: fixEnd,
+        filesChanged: ["src/auth/refresh.ts", "src/auth/rotation.ts"],
+      },
+    ],
+    activities: [
+      {
+        id: actId(id, "build-fix-note"),
+        kind: "agent-note",
+        requirementId: id,
+        at: fixEnd,
+        authorType: "agent",
+        authorName: "build-agent",
+        authorPlatform: "claude-code",
+        content:
+          "修复完成：refresh token rotation race 改用 single-flight；401 重定向改为保留 query 参数。",
+        sessionRef: sessIdFn(id, "build-2"),
+      },
+      {
+        id: actId(id, "stage-check-2"),
+        kind: "stage-transition",
+        requirementId: id,
+        at: fixEnd + 10 * minute,
+        fromStage: "do",
+        toStage: "check",
+        authorType: "human",
+        authorName: "Alice",
+        reason: "修复完成，启动复验",
+      },
+      ...req.activities,
+    ],
+  };
+}
+
+// ---- step 6: 同一 session 复验 ----
+function applyRevalidateStep(req: Requirement): Requirement {
+  const id = req.id;
+  const T0 = req.createdAt;
+  const validateId = sessIdFn(id, "validate-1");
+  const check2Start = T0 + 2 * day + 3 * hour;
+  const check2End = check2Start + 35 * minute;
+
+  const updatedSessions = req.sessions.map((s) => {
+    if (s.id !== validateId) return s;
+    return {
+      ...s,
+      resumedAt: check2Start,
+      endedAt: check2End,
+      lastActivityAt: check2End,
+      messageCount: s.messageCount + 8,
+      durationMs: (s.durationMs ?? 0) + 35 * minute,
+    };
+  });
+
+  return {
+    ...req,
+    updatedAt: check2End + 30 * minute,
+    currentStage: "deliver",
+    status: "delivered",
+    sessions: updatedSessions,
+    documents: [
+      ...req.documents,
+      {
+        filePath: "docs/05-validation-report-v2.md",
+        title: "验证报告 v2 · 复验通过",
+        excerpt:
+          "原 2 处问题已修复；新增 4 个边界用例覆盖。回归 + 边界共 36 用例，全通过。check 通过。",
+        kind: "report",
+        stage: "check",
+        lastEditedBy: "opencode",
+        lastEditedByName: "validation-agent",
+        lastEditedAt: check2End,
+        sizeBytes: 11_200,
+        lineCount: 286,
+      },
+    ],
+    mrs: req.mrs.map((m) => ({ ...m, status: "merged" as const })),
+    activities: [
+      {
+        id: actId(id, "validate-pass"),
+        kind: "agent-note",
+        requirementId: id,
+        at: check2End,
+        authorType: "agent",
+        authorName: "validation-agent",
+        authorPlatform: "opencode",
+        content:
+          "复验完成。原 2 个问题（refresh token rotation race / 401 重定向丢 query）已修复，本次回归 0 问题，check 通过。",
+        sessionRef: validateId,
+      },
+      {
+        id: actId(id, "stage-deliver"),
+        kind: "stage-transition",
+        requirementId: id,
+        at: check2End + 30 * minute,
+        fromStage: "check",
+        toStage: "deliver",
+        authorType: "human",
+        authorName: "Alice",
+        reason: "复验通过，进入交付",
+      },
+      ...req.activities,
+    ],
+  };
+}
+
+// ---- step 7: deploy 部署 ----
+function applyDeployStep(req: Requirement): Requirement {
+  const id = req.id;
+  const T0 = req.createdAt;
+  const deployStart = T0 + 2 * day + 4 * hour;
+  const deployEnd = T0 + 2 * day + 6 * hour + 30 * minute;
+
+  return {
+    ...req,
+    updatedAt: deployEnd,
+    sessions: [
+      ...req.sessions,
+      {
+        id: sessIdFn(id, "deploy"),
+        requirementId: id,
+        platform: "codex",
+        externalRef: "cdx-deploy-44",
+        title: "部署：5 个微服务滚动升级 + 24h 灰度监控",
+        status: "completed",
+        participants: [
+          { kind: "agent", name: "deploy-agent", platform: "codex", role: "primary" },
+          { kind: "human", name: "Alice", role: "reviewer" },
+        ],
+        startedAt: deployStart,
+        endedAt: deployEnd,
+        lastActivityAt: deployEnd,
+        toolCount: 9,
+        messageCount: 22,
+        durationMs: 2 * hour + 30 * minute,
+      },
+    ],
+    documents: [
+      ...req.documents,
+      {
+        filePath: "docs/06-online-validation-report.md",
+        title: "线上验证报告 · 24h 灰度观察",
+        excerpt:
+          "灰度期间：登录成功率 99.94%；refresh 失败率 0.02%（低于基线 0.05%）；跨端踢出 SSE 通知到达率 100%。",
+        kind: "report",
+        stage: "deliver",
+        lastEditedBy: "codex",
+        lastEditedByName: "deploy-agent",
+        lastEditedAt: deployEnd,
+        sizeBytes: 7_800,
+        lineCount: 198,
+      },
+    ],
+    activities: [
+      {
+        id: actId(id, "deploy-note"),
+        kind: "agent-note",
+        requirementId: id,
+        at: deployEnd,
+        authorType: "agent",
+        authorName: "deploy-agent",
+        authorPlatform: "codex",
+        content:
+          "线上部署完成，5 个微服务滚动升级完成；24h 灰度观察在线验证报告（见 artifacts）。",
+        sessionRef: sessIdFn(id, "deploy"),
+      },
+      ...req.activities,
+    ],
+  };
+}
+
+// 派生每个 demo step 在 req 上的完成状态（用于按钮 enable/disable）
+export function demoStepStates(req: Requirement): Record<DemoStepId, "pending" | "active" | "done"> {
+  const sessions = req.sessions.map((s) => s.id);
+  const transitions = req.activities.filter((a) => a.kind === "stage-transition");
+
+  const hasStageInit = transitions.some((a) => a.kind === "stage-transition" && a.fromStage === null);
+  const hasPlanSession = sessions.some((id) => id.endsWith("-plan"));
+  const hasBuild1 = sessions.some((id) => id.endsWith("-build-1"));
+  const hasValidate1 = sessions.some((id) => id.endsWith("-validate-1"));
+  const hasBuild2 = sessions.some((id) => id.endsWith("-build-2"));
+  const hasDeploy = sessions.some((id) => id.endsWith("-deploy"));
+
+  // plan→do 后再 do→check 才算 step 3 完成
+  const planToDoAt = transitions.find((a) => a.kind === "stage-transition" && a.fromStage === "plan" && a.toStage === "do")?.at ?? 0;
+  const doToCheckCount = transitions.filter(
+    (a) => a.kind === "stage-transition" && a.fromStage === "do" && a.toStage === "check" && a.at >= planToDoAt
+  ).length;
+  const checkToDoCount = transitions.filter(
+    (a) => a.kind === "stage-transition" && a.fromStage === "check" && a.toStage === "do"
+  ).length;
+
+  const validate1 = req.sessions.find((s) => s.id.endsWith("-validate-1"));
+  const validateResumed = validate1?.resumedAt != null;
+
+  const s1 = hasStageInit;
+  const s2 = s1 && hasPlanSession;
+  const s3 = s2 && hasBuild1 && doToCheckCount >= 1;
+  const s4 = s3 && hasValidate1 && checkToDoCount >= 1;
+  const s5 = s4 && hasBuild2;
+  const s6 = s5 && validateResumed;
+  const s7 = s6 && hasDeploy;
+
+  const mk = (done: boolean, prev: boolean): "pending" | "active" | "done" =>
+    done ? "done" : prev ? "active" : "pending";
+
+  return {
+    1: mk(s1, true),
+    2: mk(s2, s1),
+    3: mk(s3, s2),
+    4: mk(s4, s3),
+    5: mk(s5, s4),
+    6: mk(s6, s5),
+    7: mk(s7, s6),
+  };
+}

@@ -13,7 +13,12 @@ import type {
   Requirement,
   StageTransitionActivity,
 } from "@/components/works/types";
-import { REQUIREMENTS, SESSIONS } from "@/components/works/mock-requirements";
+import {
+  applyDemoStep,
+  createEmptyDemoRequirement,
+  REQUIREMENTS,
+} from "@/components/works/mock-requirements";
+import type { DemoStepId } from "@/components/works/mock-requirements";
 
 interface TransitionPayload {
   toStage: import("@/components/works/types").StageKind;
@@ -33,17 +38,21 @@ interface AddCommentPayload {
 
 interface RequirementsState {
   requirements: Requirement[];
+  demoSeq: number;
   transitionStage: (reqId: string, payload: TransitionPayload) => void;
   addComment: (reqId: string, payload: AddCommentPayload) => void;
   toggleResolveComment: (reqId: string, activityId: string) => void;
+  createDemoRequirement: () => string;
+  advanceDemoStep: (reqId: string, step: DemoStepId) => void;
 }
 
 function makeActivityId(prefix: string): string {
   return `${prefix}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-export const useRequirementsStore = create<RequirementsState>((set) => ({
+export const useRequirementsStore = create<RequirementsState>((set, get) => ({
   requirements: REQUIREMENTS,
+  demoSeq: 1,
 
   transitionStage: (reqId, payload) => {
     set((state) => ({
@@ -109,7 +118,32 @@ export const useRequirementsStore = create<RequirementsState>((set) => ({
       }),
     }));
   },
-}));
 
-// 保留 SESSIONS 导出（其他模块仍在用）
-export { SESSIONS };
+  seedDemoFlow: () => {
+    const seq = get().demoSeq;
+    const req = createEmptyDemoRequirement(seq);
+    set((state) => ({
+      requirements: [req, ...state.requirements],
+      demoSeq: seq + 1,
+    }));
+    return req.id;
+  },
+
+  createDemoRequirement: () => {
+    const seq = get().demoSeq;
+    const req = createEmptyDemoRequirement(seq);
+    set((state) => ({
+      requirements: [req, ...state.requirements],
+      demoSeq: seq + 1,
+    }));
+    return req.id;
+  },
+
+  advanceDemoStep: (reqId, step) => {
+    set((state) => ({
+      requirements: state.requirements.map((r) =>
+        r.id === reqId ? applyDemoStep(r, step) : r
+      ),
+    }));
+  },
+}));

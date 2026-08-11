@@ -173,4 +173,5 @@ export interface Requirement {
   branches: Branch[];
   mrs: MR[];
   commits: Commit[];
+  sessions: Session[];
 }

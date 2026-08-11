@@ -1,4 +1,4 @@
-import { Briefcase, Search, Plus, ChevronRight, Loader2 } from "lucide-react";
+import { Briefcase, Search, Plus, ChevronRight, Loader2, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -8,6 +8,7 @@ import { cn, formatRelativeTime } from "@/lib/utils";
 import type { Requirement, RequirementStatus } from "./types";
 import { useRequirements } from "./selectors";
 import { stageLabelCN } from "./selectors";
+import { useRequirementsStore } from "@/stores/requirements-store";
 
 const STATUS_TABS: Array<{ value: "all" | RequirementStatus; label: string }> = [
   { value: "all", label: "全部" },
@@ -54,6 +55,12 @@ export function RequirementList({
   const all = useRequirements({});
   const counts: Record<string, number> = { all: all.length };
   for (const r of all) counts[r.status] = (counts[r.status] ?? 0) + 1;
+  const createDemoRequirement = useRequirementsStore((s) => s.createDemoRequirement);
+
+  function handleDemo() {
+    const newId = createDemoRequirement();
+    onSelect(newId);
+  }
 
   return (
     <div className="flex h-full flex-col">
@@ -72,15 +79,27 @@ export function RequirementList({
               {counts.all}
             </span>
           </div>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            className="h-6 w-6"
-            title="新建需求 (demo: disabled)"
-            disabled
-          >
-            <Plus className="h-3.5 w-3.5" />
-          </Button>
+          <div className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 gap-1 px-1.5 text-[10.5px] text-accent hover:bg-accent/10"
+              title="新建一条空需求，进入演示 workflow"
+              onClick={handleDemo}
+            >
+              <Sparkles className="h-3 w-3" />
+              新建需求
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="h-6 w-6"
+              title="新建需求 (demo: disabled)"
+              disabled
+            >
+              <Plus className="h-3.5 w-3.5" />
+            </Button>
+          </div>
         </div>
 
         <div className="relative">

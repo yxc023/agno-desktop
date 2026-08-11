@@ -10,27 +10,28 @@ import type {
 } from "./types";
 import {
   PLATFORM_LABEL,
-  REQUIREMENTS,
-  SESSIONS,
   STATUS_LABEL,
   STAGE_DEFINITIONS,
   STAGE_LABEL,
   STAGE_LABEL_CN,
 } from "./mock-requirements";
+import { useRequirementsStore } from "@/stores/requirements-store";
 
 export function useRequirement(id: string | null): Requirement | null {
+  const requirements = useRequirementsStore((s) => s.requirements);
   return useMemo(() => {
     if (!id) return null;
-    return REQUIREMENTS.find((r) => r.id === id) ?? null;
-  }, [id]);
+    return requirements.find((r) => r.id === id) ?? null;
+  }, [id, requirements]);
 }
 
 export function useRequirements(filter?: {
   status?: Requirement["status"];
   search?: string;
 }): Requirement[] {
+  const requirements = useRequirementsStore((s) => s.requirements);
   return useMemo(() => {
-    let list = REQUIREMENTS;
+    let list = requirements;
     if (filter?.status) list = list.filter((r) => r.status === filter.status);
     const q = filter?.search?.trim().toLowerCase();
     if (q) {
@@ -43,15 +44,13 @@ export function useRequirements(filter?: {
       );
     }
     return list;
-  }, [filter?.status, filter?.search]);
+  }, [requirements, filter?.status, filter?.search]);
 }
 
 export function useSessionsByRequirement(req: Requirement | null): Session[] {
   return useMemo(() => {
     if (!req) return [];
-    return SESSIONS.filter((s) => s.requirementId === req.id).sort(
-      (a, b) => b.startedAt - a.startedAt
-    );
+    return [...req.sessions].sort((a, b) => b.startedAt - a.startedAt);
   }, [req]);
 }
 
@@ -165,9 +164,7 @@ export function getActivitiesByKind(req: Requirement, kind: Activity["kind"]): A
 }
 
 export {
-  REQUIREMENTS,
   PLATFORM_LABEL,
-  SESSIONS,
   STATUS_LABEL,
   STAGE_LABEL,
   STAGE_LABEL_CN,
