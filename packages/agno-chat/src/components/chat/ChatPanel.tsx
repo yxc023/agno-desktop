@@ -16,7 +16,7 @@ import { useAutoScroll } from "../../hooks/use-auto-scroll";
 import { useHashScroll, writeMessageHash } from "../../hooks/use-hash-scroll";
 import { clearAllShadows } from "../../lib/chat-buffer";
 import { cn } from "../../lib/utils";
-import type { AgentSummary } from "../../types";
+import type { AgAgentResponse } from "../../lib/agno-types";
 
 const EXAMPLE_PROMPTS = [
   {
@@ -40,13 +40,27 @@ const EXAMPLE_PROMPTS = [
 ];
 
 export interface ChatPanelImplProps {
-  agents?: AgentSummary[];
-  onAgentsChange?: (agents: AgentSummary[]) => void;
+  agents?: AgAgentResponse[];
+  onAgentsChange?: (agents: AgAgentResponse[]) => void;
   onOpenExternalUrl?: (url: string) => void;
   autoScroll?: boolean;
   hideReasoning?: boolean;
   briefToolCalls?: boolean;
   userIdSetupSlot?: React.ReactNode;
+  /** 当前实例的简化视图（id / baseUrl / lastAgentsError） */
+  instanceInfo?: {
+    id: string;
+    baseUrl: string;
+    lastAgentsError?: string | null;
+  } | null;
+  /** 当前实例是否正在加载 agents */
+  loadingAgents?: boolean;
+  /** 触发探活 + 拉 agents 的回调（由宿主应用注入） */
+  onRefreshAgents?: () => void;
+  /** CORS 修复一键改 /api 的回调 */
+  onFixCors?: () => void;
+  /** user_id（空串 = 未设置） */
+  userId?: string;
   slots?: {
     header?: React.ReactNode;
     empty?: React.ReactNode;
@@ -100,6 +114,11 @@ export function ChatPanel({
   agents = [],
   autoScroll: autoScrollEnabled = true,
   userIdSetupSlot,
+  instanceInfo,
+  loadingAgents = false,
+  onRefreshAgents,
+  onFixCors,
+  userId = "",
   slots,
 }: ChatPanelImplProps) {
   const currentSessionId = useSessionsStore((s) => s.currentSessionId);
@@ -242,7 +261,14 @@ export function ChatPanel({
 
       {currentSessionId && (
         <>
-          <MessageInput />
+          <MessageInput
+            instance={instanceInfo ?? null}
+            agents={agents ?? []}
+            loadingAgents={loadingAgents}
+            onRefreshAgents={onRefreshAgents ?? (() => {})}
+            onFixCors={onFixCors}
+            userId={userId}
+          />
           {slots?.inputFooter}
         </>
       )}

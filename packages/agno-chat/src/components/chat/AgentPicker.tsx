@@ -17,6 +17,10 @@
  * - h-6（不是 h-7）
  * - min-w-[140px]（不是 200px，让出位置给 user_id）
  * - badge 紧凑，去掉 "agent locked" 副文案
+ *
+ * 设计上从 store 解耦：实例 / agents / 加载态 / 错误 / 刷新动作都从 props 传入，
+ * 这样包不直接依赖 useInstancesStore，宿主应用负责把"当前实例"相关数据
+ * 投喂进来。
  */
 
 import { useMemo } from "react";
@@ -36,27 +40,33 @@ import {
   SelectValue,
 } from "../../ui/select";
 import { cn } from "../../lib/utils";
-import {
-  useActiveAgents,
-  useActiveInstance,
-  useIsLoadingAgents,
-  useInstancesStore,
-} from "../../stores/instances-store";
 import { useSessionsStore } from "../../stores/sessions-store";
 import { useChatStore } from "../../stores/chat-store";
 import type { AgAgentResponse } from "../../lib/agno-types";
 
-interface Props {
-  className?: string;
+export interface AgentPickerInstance {
+  id: string;
+  baseUrl: string;
+  lastAgentsError?: string | null;
 }
 
-export function AgentPicker({ className }: Props) {
-  const active = useActiveInstance();
-  const agents = useActiveAgents();
-  const loadingAgents = useIsLoadingAgents();
-  const probe = useInstancesStore((s) => s.probeInstance);
-  const loadAgents = useInstancesStore((s) => s.loadAgents);
+interface Props {
+  className?: string;
+  instance: AgentPickerInstance | null;
+  agents: AgAgentResponse[];
+  loadingAgents: boolean;
+  onRefresh: () => void;
+  onFixCors?: () => void;
+}
 
+export function AgentPicker({
+  className,
+  instance,
+  agents,
+  loadingAgents,
+  onRefresh,
+  onFixCors,
+}: Props) {
   const currentSessionId = useSessionsStore((s) => s.currentSessionId);
   const sessions = useSessionsStore((s) => {
     if (!currentSessionId) return [];
@@ -77,7 +87,7 @@ export function AgentPicker({ className }: Props) {
   const selectedAgentId = useChatStore((s) => s.selectedAgentId);
   const setSelectedAgent = useChatStore((s) => s.setSelectedAgent);
 
-  if (!active) return null;
+  if (!instance) return null;
 
   // locked: session 已绑定 agent
   if (currentSession?.agent_id) {
@@ -100,7 +110,7 @@ export function AgentPicker({ className }: Props) {
     );
   }
 
-  // 没有 session / 新会话路径：可选择
+  // 没有 session / / 新会话路径：可选择
   const value = selectedAgentId ?? agents[0]?.id ?? "";
   const placeholder = loadingAgents
     ? "loading…"
@@ -139,71 +149,44 @@ export function AgentPicker({ className }: Props) {
             </div>
           )}
 
-          {!loadingAgents && active.lastAgentsError && (
+          {!loadingAgents && instance.lastAgentsError && (
             <div className="space-y-2 px-2 py-2">
               <div className="flex items-start gap-1.5 font-mono text-[11px] text-destructive">
                 <AlertCircle className="h-3 w-3 mt-0.5 shrink-0" />
                 <div className="flex-1 break-all whitespace-pre-line">
                   <div className="font-medium">拉取失败</div>
                   <div className="text-destructive/80 text-[10px] mt-0.5">
-                    {active.lastAgentsError}
+                    {instance.lastAgentsError}
                   </div>
                 </div>
               </div>
-              {active.lastAgentsError.includes("CORS") &&
-                /^https?:\/\//i.test(active.baseUrl) && (
+              {instance.lastAgentsError.includes("CORS") &&
+                onFixCors &&
+                /^https?:\/\//i.test(instance.baseUrl) && (
                   <Button
                     size="sm"
                     variant="outline"
                     className="h-7 w-full border-accent/40 text-accent"
-                    onClick={() => {
-                      const id = active.id;
-                      useInstancesStore
-                        .getState()
-                        .updateInstance(id, { baseUrl: "/api" });
-                      setTimeout(() => {
-                        useInstancesStore.getState().probeInstance(id);
-                        useInstancesStore.getState().loadAgents(id, true);
-                      }, 100);
-                    }}
+                    onClick={onFixCors}
                   >
                     <Terminal className="h-3 w-3 mr-1.5" />
                     一键改用 /api 代理
                   </Button>
                 )}
-              <div className="flex gap-1.5">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-7 flex-1 text-[11px]"
-                  onClick={() => {
-                    probe(active.id);
-                    loadAgents(active.id, true);
-                  }}
-                >
-                  <RefreshCw className="h-3 w-3 mr-1.5" />
-                  重试
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-7 text-[11px]"
-                  onClick={() => {
-                    const docsBase =
-                      active.baseUrl.replace(/\/api\/?$/, "") ||
-                      active.baseUrl;
-                    window.open(`${docsBase}/docs`, "_blank");
-                  }}
-                  title="查看 AGNO API 文档"
-                >
-                  <Terminal className="h-3 w-3" />
-                </Button>
-              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 w-full text-[11px]"
+                onClick={onRefresh}
+              >
+                <RefreshCw className="h-3 w-3 mr-1.5" />
+                重试
+              </Button>
             </div>
           )}
 
           {!loadingAgents &&
-            !active.lastAgentsError &&
+            !instance.lastAgentsError &&
             agents.length === 0 && (
               <div className="space-y-2 px-2 py-3">
                 <div className="flex items-center gap-1.5 font-mono text-[11px] text-muted-foreground">
@@ -214,7 +197,7 @@ export function AgentPicker({ className }: Props) {
                   size="sm"
                   variant="outline"
                   className="h-7 w-full text-[11px]"
-                  onClick={() => loadAgents(active.id, true)}
+                  onClick={onRefresh}
                 >
                   <RefreshCw className="h-3 w-3 mr-1.5" />
                   重新拉取
@@ -223,7 +206,7 @@ export function AgentPicker({ className }: Props) {
             )}
 
           {!loadingAgents &&
-            !active.lastAgentsError &&
+            !instance.lastAgentsError &&
             agents.map((a: AgAgentResponse) => (
               <SelectItem
                 key={a.id}
@@ -253,10 +236,7 @@ export function AgentPicker({ className }: Props) {
         variant="ghost"
         size="icon-sm"
         className="h-6 w-6 shrink-0"
-        onClick={() => {
-          probe(active.id);
-          loadAgents(active.id, true);
-        }}
+        onClick={onRefresh}
         title="重新探活 + 拉取 agents"
         disabled={loadingAgents}
       >

@@ -1,10 +1,7 @@
 import { useEffect } from "react";
 import { SessionList } from "@/components/sessions/SessionList";
 import { InstancesPanel } from "@/components/instances/InstancesPanel";
-import { ApprovalDialog } from "@/components/chat/ApprovalDialog";
-import { SubAgentSidePanel } from "@/components/chat/SubAgentSidePanel";
-import { FilePreviewPanel } from "@/components/chat/FilePreviewPanel";
-import { ChatPanel } from "agno-chat";
+import { ChatPanel, FilePreviewPanel } from "agno-chat";
 import { useInstancesStore } from "@/stores/instances-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useUIStore } from "@/stores/ui-store";
@@ -42,6 +39,9 @@ export function ChatPage() {
 
   const instancesPanelOpen = useUIStore((s) => s.instancesPanelOpen);
   const filePreviewPanelOpen = useUIStore((s) => s.filePreviewPanelOpen);
+  const loadingAgents = useInstancesStore((s) =>
+    active ? !!s.loadingAgents[active.id] : false
+  );
 
   const sessions = useColumnResize({
     initial: clampWidth(persistedSessions ?? DEFAULT_SESSIONS_WIDTH, MIN_SESSIONS, MAX_SESSIONS),
@@ -80,87 +80,92 @@ export function ChatPage() {
   }, [active, probe]);
 
   if (!active) {
-    return (
-      <>
-        <WelcomeScreen />
-        <ApprovalDialog />
-        <SubAgentSidePanel />
-      </>
-    );
+    return <WelcomeScreen />;
   }
 
-  const agents = (active.agents ?? []).map((a) => ({
-    id: a.id ?? "",
-    name: a.name,
-    description: a.description ?? undefined,
-  }));
+  const agents = active.agents ?? [];
+  const firstAgentId = agents[0]?.id;
 
   return (
-    <>
-      <div className="flex min-h-0 flex-1 overflow-hidden">
-        {sessionsListOpen && (
-          <>
-            <aside
-              className="flex shrink-0 flex-col border-r border-sidebar-border bg-sidebar"
-              style={{ width: sessions.width }}
-            >
-              <SessionList />
-            </aside>
-            <VerticalResizeHandle
-              ariaLabel="拖动调整会话栏宽度（双击重置）"
-              onMouseDown={sessions.dragHandlers.onMouseDown}
-              onDoubleClick={sessions.dragHandlers.onDoubleClick}
-              onMouseUp={sessions.persist}
-            />
-          </>
-        )}
-
-        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-          <ChatPanel
-            baseUrl={active.baseUrl}
-            auth={{ token: active.token ?? undefined }}
-            agentId={agents[0]?.id}
-            agents={agents}
-            userId={active.userId}
+    <div className="flex min-h-0 flex-1 overflow-hidden">
+      {sessionsListOpen && (
+        <>
+          <aside
+            className="flex shrink-0 flex-col border-r border-sidebar-border bg-sidebar"
+            style={{ width: sessions.width }}
+          >
+            <SessionList />
+          </aside>
+          <VerticalResizeHandle
+            ariaLabel="拖动调整会话栏宽度（双击重置）"
+            onMouseDown={sessions.dragHandlers.onMouseDown}
+            onDoubleClick={sessions.dragHandlers.onDoubleClick}
+            onMouseUp={sessions.persist}
           />
-        </div>
+        </>
+      )}
 
-        {filePreviewPanelOpen && (
-          <>
-            <VerticalResizeHandle
-              ariaLabel="拖动调整预览栏宽度（双击重置）"
-              onMouseDown={filePreview.dragHandlers.onMouseDown}
-              onDoubleClick={filePreview.dragHandlers.onDoubleClick}
-              onMouseUp={filePreview.persist}
-            />
-            <aside
-              className="flex shrink-0 flex-col overflow-hidden border-l border-sidebar-border bg-background"
-              style={{ width: filePreview.width }}
-            >
-              <FilePreviewPanel sessionId={currentSessionId} />
-            </aside>
-          </>
-        )}
-
-        {instancesPanelOpen && (
-          <>
-            <VerticalResizeHandle
-              ariaLabel="拖动调整右侧栏宽度（双击重置）"
-              onMouseDown={right.dragHandlers.onMouseDown}
-              onDoubleClick={right.dragHandlers.onDoubleClick}
-              onMouseUp={right.persist}
-            />
-            <aside
-              className="flex shrink-0 flex-col overflow-y-auto overscroll-y-contain border-l border-sidebar-border bg-sidebar/40 p-3"
-              style={{ width: right.width }}
-            >
-              <InstancesPanel />
-            </aside>
-          </>
-        )}
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <ChatPanel
+          baseUrl={active.baseUrl}
+          auth={{ token: active.token ?? undefined }}
+          agentId={firstAgentId}
+          agents={agents}
+          userId={active.userId}
+          instanceInfo={{
+            id: active.id,
+            baseUrl: active.baseUrl,
+            lastAgentsError: active.lastAgentsError ?? null,
+          }}
+          loadingAgents={loadingAgents}
+          onRefreshAgents={() => {
+            probe(active.id);
+            useInstancesStore.getState().loadAgents(active.id, true);
+          }}
+          onFixCors={() => {
+            const id = active.id;
+            useInstancesStore.getState().updateInstance(id, { baseUrl: "/api" });
+            setTimeout(() => {
+              useInstancesStore.getState().probeInstance(id);
+              useInstancesStore.getState().loadAgents(id, true);
+            }, 100);
+          }}
+        />
       </div>
-      <ApprovalDialog />
-      <SubAgentSidePanel />
-    </>
+
+      {filePreviewPanelOpen && (
+        <>
+          <VerticalResizeHandle
+            ariaLabel="拖动调整预览栏宽度（双击重置）"
+            onMouseDown={filePreview.dragHandlers.onMouseDown}
+            onDoubleClick={filePreview.dragHandlers.onDoubleClick}
+            onMouseUp={filePreview.persist}
+          />
+          <aside
+            className="flex shrink-0 flex-col overflow-hidden border-l border-sidebar-border bg-background"
+            style={{ width: filePreview.width }}
+          >
+            <FilePreviewPanel sessionId={currentSessionId} />
+          </aside>
+        </>
+      )}
+
+      {instancesPanelOpen && (
+        <>
+          <VerticalResizeHandle
+            ariaLabel="拖动调整右侧栏宽度（双击重置）"
+            onMouseDown={right.dragHandlers.onMouseDown}
+            onDoubleClick={right.dragHandlers.onDoubleClick}
+            onMouseUp={right.persist}
+          />
+          <aside
+            className="flex shrink-0 flex-col overflow-y-auto overscroll-y-contain border-l border-sidebar-border bg-sidebar/40 p-3"
+            style={{ width: right.width }}
+          >
+            <InstancesPanel />
+          </aside>
+        </>
+      )}
+    </div>
   );
 }

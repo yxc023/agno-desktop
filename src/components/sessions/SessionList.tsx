@@ -66,6 +66,7 @@ function shortSessionId(id: string): string {
 
 export function SessionList() {
   const active = useActiveInstance();
+  const agentId = useChatStore((s) => s._agentId);
   const loadSessions = useSessionsStore((s) => s.loadSessions);
   const loadMoreSessions = useSessionsStore((s) => s.loadMoreSessions);
   const loading = useSessionsStore((s) => s.loading);
@@ -74,16 +75,16 @@ export function SessionList() {
   const setSearchQuery = useSessionsStore((s) => s.setSearchQuery);
   const currentSessionId = useSessionsStore((s) => s.currentSessionId);
   const loadError = useSessionsStore((s) =>
-    active ? s.loadError[active.id] ?? null : null
+    agentId ? s.loadError[agentId] ?? null : null
   );
   const setCurrentSession = useSessionsStore((s) => s.setCurrentSession);
   const removeSession = useSessionsStore((s) => s.removeSession);
   const renameSession = useSessionsStore((s) => s.renameSession);
   const sessions = useSessionsStore((s) =>
-    active ? (s.byInstance[active.id] ?? EMPTY_ARR) : EMPTY_ARR
+    agentId ? (s.byAgent[agentId] ?? EMPTY_ARR) : EMPTY_ARR
   );
   const pagination = useSessionsStore((s) =>
-    active ? s.pagination[active.id] ?? null : null
+    agentId ? s.pagination[agentId] ?? null : null
   );
   const newSession = useChatStore((s) => s.newSession);
 
@@ -91,8 +92,8 @@ export function SessionList() {
   const [renameValue, setRenameValue] = useState("");
 
   useEffect(() => {
-    if (active) loadSessions(active.id);
-  }, [active, loadSessions]);
+    if (agentId) loadSessions(agentId);
+  }, [agentId, loadSessions]);
 
   const filtered = searchQuery.trim()
     ? sessions.filter((s: AgSessionSummary) =>
@@ -202,7 +203,7 @@ export function SessionList() {
                         useInstancesStore
                           .getState()
                           .loadAgents(id, true);
-                        loadSessions(id, true);
+                        if (agentId) loadSessions(agentId, true);
                       }, 100);
                     }}
                     className="h-6 w-full border-accent/40 text-[10.5px] text-accent"
@@ -214,7 +215,7 @@ export function SessionList() {
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => active && loadSessions(active.id, true)}
+                onClick={() => agentId && loadSessions(agentId, true)}
                 className="h-6 w-full text-[10.5px]"
               >
                 <RefreshCw className="h-3 w-3 mr-1" />
@@ -252,7 +253,7 @@ export function SessionList() {
               onClick={() => setCurrentSession(s.session_id)}
               onDelete={() => {
                 if (confirm(`确定删除会话「${s.session_name ?? s.session_id}」？`)) {
-                  if (active) removeSession(active.id, s.session_id);
+                  if (agentId) removeSession(agentId, s.session_id);
                 }
               }}
               onRename={() => {
@@ -276,7 +277,7 @@ export function SessionList() {
                   variant="ghost"
                   size="sm"
                   disabled={loadingMore}
-                  onClick={() => active && loadMoreSessions(active.id)}
+                  onClick={() => agentId && loadMoreSessions(agentId)}
                   className="w-full h-7 text-[11px] text-muted-foreground hover:text-foreground"
                 >
                   {loadingMore ? (
@@ -310,7 +311,7 @@ export function SessionList() {
         </div>
       </ScrollArea>
 
-      {renameTarget && active && (
+      {renameTarget && agentId && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/85 backdrop-blur-sm">
           <div className="w-80 space-y-3 rounded-lg border bg-card p-4 shadow-xl">
             <div className="text-[13px] font-medium">重命名会话</div>
@@ -320,7 +321,7 @@ export function SessionList() {
               autoFocus
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
-                  renameSession(active.id, renameTarget.session_id, renameValue);
+                  renameSession(agentId, renameTarget.session_id, renameValue);
                   setRenameTarget(null);
                 }
                 if (e.key === "Escape") setRenameTarget(null);
@@ -333,7 +334,7 @@ export function SessionList() {
               <Button
                 size="sm"
                 onClick={() => {
-                  renameSession(active.id, renameTarget.session_id, renameValue);
+                  renameSession(agentId, renameTarget.session_id, renameValue);
                   setRenameTarget(null);
                 }}
               >

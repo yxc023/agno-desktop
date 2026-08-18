@@ -4,6 +4,7 @@
  */
 export {
   useChatStore,
+  buildToolResultIndex,
   useCurrentSessionMessages,
   useSubMessageById,
   useLatestInputTokens,

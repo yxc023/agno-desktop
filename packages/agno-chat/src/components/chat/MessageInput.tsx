@@ -1,15 +1,46 @@
 import { useEffect, useRef, useState } from "react";
-import { Send, Paperclip, X, Square, Loader2, FileText, AlertTriangle, User } from "lucide-react";
+import {
+  Send,
+  Paperclip,
+  X,
+  Square,
+  Loader2,
+  FileText,
+  AlertTriangle,
+  User,
+} from "lucide-react";
 import { Button } from "../../ui/button";
 import { Textarea } from "../../ui/input";
 import { cn } from "../../lib/utils";
 import { shouldSendOnEnter } from "../../lib/ime-composing";
 import { useChatStore, useCurrentSessionMessages } from "../../stores/chat-store";
-import { useActiveInstance } from "../../stores/instances-store";
 import { useSessionsStore } from "../../stores/sessions-store";
-import { AgentPicker } from "./AgentPicker";
+import { AgentPicker, type AgentPickerInstance } from "./AgentPicker";
+import type { AgAgentResponse } from "../../lib/agno-types";
 
-export function MessageInput() {
+export interface MessageInputProps {
+  /** 当前活跃实例的标识 / 错误信息，供 AgentPicker 显示状态 */
+  instance: AgentPickerInstance | null;
+  /** 当前实例的 agents 列表 */
+  agents: AgAgentResponse[];
+  /** 当前实例是否正在加载 agents */
+  loadingAgents: boolean;
+  /** 触发探活 + loadAgents 的回调 */
+  onRefreshAgents: () => void;
+  /** CORS 修复按钮的回调（baseUrl → /api） */
+  onFixCors?: () => void;
+  /** 当前实例的 user_id；空串或 undefined 表示未设置 */
+  userId?: string;
+}
+
+export function MessageInput({
+  instance,
+  agents,
+  loadingAgents,
+  onRefreshAgents,
+  onFixCors,
+  userId = "",
+}: MessageInputProps) {
   const sendMessage = useChatStore((s) => s.sendMessage);
   const cancelRun = useChatStore((s) => s.cancelRun);
 
@@ -43,9 +74,7 @@ export function MessageInput() {
   //   等边界情况。
   const composingRef = useRef(false);
 
-  const active = useActiveInstance();
-  const userId = active?.userId ?? "";
-  const needUserId = !userId.trim() || !active;
+  const needUserId = !userId.trim() || !instance;
 
   // 自适应高度
   useEffect(() => {
@@ -61,10 +90,7 @@ export function MessageInput() {
       return;
     }
     const trimmed = text.trim();
-    // globalRunnerIsRunning 守 send 门：避免在另一个 session 还在跑时
-    // 替换 runner（runner.abort() 没被调用，老 SSE 流还在持续往 store 写）。
     if (!trimmed || sending || globalRunnerIsRunning) return;
-    // 先抓快照再清空——这样 send 失败时还能把原文塞回去。
     const snapshotText = trimmed;
     const snapshotFiles = files;
     setText("");
@@ -78,8 +104,6 @@ export function MessageInput() {
     } catch (err) {
       console.error("sendMessage failed", err);
       alert(err instanceof Error ? err.message : String(err));
-      // 失败回滚：把输入内容还回去（覆盖用户在此期间键入的新内容，
-      // 但这种竞态极少且"恢复用户原文"对调试更友好）。
       setText(snapshotText);
       setFiles(snapshotFiles);
     } finally {
@@ -136,7 +160,6 @@ export function MessageInput() {
           className={cn(
             "relative flex min-w-0 items-end gap-2 rounded-xl border bg-card shadow-sm transition-all",
             "focus-within:border-primary/40 focus-within:shadow-md",
-            // 边框高亮：仅"本 session 在响应"时亮；别的 session 跑时不影响
             sessionIsStreaming && "border-primary/30",
             needUserId && "opacity-70"
           )}
@@ -152,7 +175,6 @@ export function MessageInput() {
             variant="ghost"
             size="icon-sm"
             onClick={() => fileInputRef.current?.click()}
-            // 附件按钮：本 session 跑时禁用；其他 session 跑时不禁用
             disabled={sessionIsStreaming || needUserId}
             className="ml-1 mb-1 shrink-0"
             title="附加文件"
@@ -168,7 +190,6 @@ export function MessageInput() {
             onCompositionStart={handleCompositionStart}
             onCompositionEnd={handleCompositionEnd}
             placeholder={
-              // 三态：本 session 在响应 / 其他 session 跑 / 未设置 user_id
               sessionIsStreaming
                 ? "Agent 正在响应…"
                 : globalRunnerIsRunning
@@ -178,7 +199,6 @@ export function MessageInput() {
                 : "发送消息"
             }
             rows={1}
-            // 禁用：本 session 跑 OR 别的 session 跑 OR user_id 未设置
             disabled={sessionIsStreaming || globalRunnerIsRunning || needUserId}
             className="min-w-0 flex-1 min-h-[36px] max-h-[240px] border-0 shadow-none focus-visible:ring-0 bg-transparent resize-none px-1 py-2 text-sm"
           />
@@ -219,7 +239,14 @@ export function MessageInput() {
         {/* Bottom row: agent 选择 + (spacer) + user_id。
             min-w-0 + truncate 让两端在窄列里各自 truncate 而非推挤。 */}
         <div className="mt-1.5 flex min-w-0 items-center gap-2 px-1">
-          <AgentPicker className="min-w-0 flex-shrink" />
+          <AgentPicker
+            className="min-w-0 flex-shrink"
+            instance={instance}
+            agents={agents}
+            loadingAgents={loadingAgents}
+            onRefresh={onRefreshAgents}
+            onFixCors={onFixCors}
+          />
           <div className="flex-1 min-w-0" />
           <span className="flex shrink-0 items-center gap-1 text-[10px] text-muted-foreground/80">
             <User className="h-2.5 w-2.5" />
@@ -236,7 +263,7 @@ export function MessageInput() {
 function FileChip({ file, onRemove }: { file: File; onRemove: () => void }) {
   const sizeKb = (file.size / 1024).toFixed(1);
   return (
-    <div className="flex items-center gap-1.5 rounded-md border bg-muted/40 px-2 py-1 text-xs">
+    <div className="flex items-center gap-1.5 rounded-md border bg-muted/40 px-3 py-1 text-xs">
       <FileText className="h-3 w-3 text-muted-foreground" />
       <span className="font-medium truncate max-w-[150px]">{file.name}</span>
       <span className="text-muted-foreground">{sizeKb}KB</span>

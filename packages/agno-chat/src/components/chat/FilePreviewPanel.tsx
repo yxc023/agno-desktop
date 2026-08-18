@@ -65,10 +65,10 @@ const KIND_ICON: Record<PreviewKind, typeof FileText> = {
 
 interface Props {
   /** 当前 session；null 时面板只显示自己的 empty state */
-  sessionId: string | null;
+  sessionId?: string | null;
 }
 
-export function FilePreviewPanel({ sessionId }: Props) {
+export function FilePreviewPanel({ sessionId = null }: Props) {
   // 注意：selector 里**不能**调 .filter() —— 每次返回新数组会让 zustand
   // 的 useSyncExternalStore 误判 snapshot 变了，导致无限 re-render。
   // 先选 raw tabs，再在 useMemo 里按 sessionId 派生。

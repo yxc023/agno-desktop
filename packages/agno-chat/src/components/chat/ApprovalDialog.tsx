@@ -15,7 +15,6 @@ import { Badge } from "../../ui/badge";
 import { CodeBlock } from "../../markdown/CodeBlock";
 import { useChatStore } from "../../stores/chat-store";
 import { useUIStore } from "../../stores/ui-store";
-import { useActiveInstance } from "../../stores/instances-store";
 import { useSessionsStore } from "../../stores/sessions-store";
 import { useEffect } from "react";
 
@@ -27,7 +26,6 @@ export function ApprovalDialog() {
   const sessions = useSessionsStore((s) => s.currentSessionId);
   const runner = useChatStore((s) => s.runner);
   const messages = useChatStore((s) => s.messagesBySession);
-  const active = useActiveInstance();
 
   // 自动跟踪 runner 的 pauseInfo
   useEffect(() => {
