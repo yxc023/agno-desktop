@@ -12,6 +12,10 @@ export interface ChatPanelProps {
   showReasoning?: boolean;
   showContextProgress?: boolean;
   briefToolCalls?: boolean;
+  hideReasoning?: boolean;
+  autoScroll?: boolean;
+  userId?: string;
+  onOpenExternalUrl?: (url: string) => void;
   onError?: (err: Error) => void;
   onSessionChange?: (sessionId: string | null) => void;
   slots?: ChatPanelSlots;
@@ -27,6 +31,7 @@ export interface ChatPanelSlots {
   header?: (ctx: { sessionName?: string }) => ReactNode;
   empty?: () => ReactNode;
   inputFooter?: () => ReactNode;
+  userIdSetup?: ReactNode;
 }
 
 export interface AgentSummary {

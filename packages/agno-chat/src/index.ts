@@ -10,4 +10,6 @@ export type {
 } from "./types";
 
 export { AgnoClient } from "./lib/agno-client";
-export { resolveToolRender } from "./lib/tool-render-utils";
+export { pickCommand, unwrapToolResult, isShellTool, pickShellOutput, truncateText } from "./lib/tool-render-utils";
+export { useChatStore, buildToolResultIndex, useCurrentSessionMessages, useSubMessageById, useLatestInputTokens, useLatestOutputTokens, useLatestModelId } from "./stores/chat-store";
+export { useSessionsStore, useCurrentAgentSessions } from "./stores/sessions-store";

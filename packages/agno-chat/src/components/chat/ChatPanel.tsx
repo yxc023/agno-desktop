@@ -1,31 +1,22 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect } from "react";
 import {
   ArrowDown,
   Loader2,
   Plus,
   Cpu,
   Globe,
-  AlertTriangle,
   Terminal,
-  User,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
 import { VirtualMessageList } from "./VirtualMessageList";
 import { MessageInput } from "./MessageInput";
 import { ContextProgressBar } from "./ContextProgressBar";
-import { useChatStore, useCurrentSessionMessages, useLatestInputTokens, useLatestModelId } from "@/stores/chat-store";
-import { useSessionsStore } from "@/stores/sessions-store";
-import { useSettingsStore } from "@/stores/settings-store";
-import {
-  useActiveInstance,
-  useActiveAgents,
-  useInstancesStore,
-} from "@/stores/instances-store";
-import { UserIdSetupDialog } from "@/components/common/UserIdSetupDialog";
-import { useAutoScroll } from "@/hooks/use-auto-scroll";
-import { useHashScroll, writeMessageHash } from "@/hooks/use-hash-scroll";
+import { useChatStore, useCurrentSessionMessages, useLatestInputTokens, useLatestModelId } from "../../stores/chat-store";
+import { useSessionsStore } from "../../stores/sessions-store";
+import { useAutoScroll } from "../../hooks/use-auto-scroll";
+import { useHashScroll, writeMessageHash } from "../../hooks/use-hash-scroll";
 import { clearAllShadows } from "../../lib/chat-buffer";
+import { cn } from "../../lib/utils";
+import type { AgentSummary } from "../../types";
 
 const EXAMPLE_PROMPTS = [
   {
@@ -48,10 +39,69 @@ const EXAMPLE_PROMPTS = [
   },
 ];
 
-export function ChatPanel() {
-  const active = useActiveInstance();
-  const agents = useActiveAgents();
-  const loadAgents = useInstancesStore((s) => s.loadAgents);
+export interface ChatPanelImplProps {
+  agents?: AgentSummary[];
+  onAgentsChange?: (agents: AgentSummary[]) => void;
+  onOpenExternalUrl?: (url: string) => void;
+  autoScroll?: boolean;
+  hideReasoning?: boolean;
+  briefToolCalls?: boolean;
+  userIdSetupSlot?: React.ReactNode;
+  slots?: {
+    header?: React.ReactNode;
+    empty?: React.ReactNode;
+    inputFooter?: React.ReactNode;
+  };
+}
+
+function ChatButton({
+  variant,
+  size,
+  className,
+  children,
+  ...props
+}: React.ButtonHTMLAttributes<HTMLButtonElement> & {
+  variant?: "default" | "ghost" | "outline" | "secondary";
+  size?: "default" | "sm" | "lg" | "icon" | "icon-sm";
+}) {
+  return (
+    <button
+      className={cn(
+        "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
+        variant === "default" && "bg-primary text-primary-foreground shadow-sm hover:bg-primary/90 active:bg-primary/95",
+        variant === "outline" && "border border-input bg-background shadow-sm hover:bg-accent hover:text-accent-foreground",
+        variant === "secondary" && "bg-secondary text-secondary-foreground shadow-sm hover:bg-secondary/80",
+        variant === "ghost" && "hover:bg-accent hover:text-accent-foreground",
+        !variant && "bg-primary text-primary-foreground shadow-sm hover:bg-primary/90",
+        size === "sm" && "h-8 rounded-md px-3 text-xs",
+        size === "lg" && "h-10 rounded-md px-6",
+        size === "icon" && "h-9 w-9",
+        size === "icon-sm" && "h-7 w-7",
+        (!size || size === "default") && "h-9 px-4 py-2",
+        className
+      )}
+      {...props}
+    >
+      {children}
+    </button>
+  );
+}
+
+function ChatSkeleton({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
+  return (
+    <div
+      className={cn("animate-pulse rounded-md bg-muted", className)}
+      {...props}
+    />
+  );
+}
+
+export function ChatPanel({
+  agents = [],
+  autoScroll: autoScrollEnabled = true,
+  userIdSetupSlot,
+  slots,
+}: ChatPanelImplProps) {
   const currentSessionId = useSessionsStore((s) => s.currentSessionId);
   const messages = useCurrentSessionMessages(currentSessionId);
   const currentInputTokens = useLatestInputTokens(currentSessionId);
@@ -67,8 +117,6 @@ export function ChatPanel() {
   const setSelectedAgent = useChatStore((s) => s.setSelectedAgent);
   const newSession = useChatStore((s) => s.newSession);
   const sendMessage = useChatStore((s) => s.sendMessage);
-  const autoScroll = useSettingsStore((s) => s.autoScroll);
-  const [showUserIdSetup, setShowUserIdSetup] = useState(false);
 
   const {
     scrollRef,
@@ -77,120 +125,68 @@ export function ChatPanel() {
     pause: pauseAutoScroll,
     onScroll,
     onWheel,
-  } = useAutoScroll({ enabled: autoScroll });
+  } = useAutoScroll({ enabled: autoScrollEnabled });
 
   const hashTargetId = useHashScroll();
 
-  /**
-   * 切换 active instance 时清掉所有 shadow map 残留——chunks 已不再属于
-   * 这个 instance 的 session 了；保留只会占 module-level Map 内存。
-   * (chat-buffer 模块级 shadow 是按 messageId 索引的，不带 instance 前缀。)
-   */
   useEffect(() => {
     return () => {
       clearAllShadows();
     };
-  }, [active?.id]);
+  }, []);
 
-  /**
-   * Hash 深链 (URL 自带 #message-X，或 popstate / 用户在地址栏改 hash) active
-   * 时 pause autoScroll——避免 useAutoScroll 内的 ResizeObserver 在虚拟化器
-   * 内容变化时把视口拉回底部，覆盖 VirtualMessageList 的 scrollToIndex 跳转。
-   *
-   * "自写" hash（auto-tracking 滚动位置时调 writeMessageHash({ silent: true })）
-   * 不会更新 useHashScroll 的 target state，hashTargetId 保持不变 → 本 effect
-   * 不会重复触发 → autoscroll 正常工作。这是修"reload 后 autoscroll 失活"
-   * 这个 bug 的核心：之前两者都会设 hash → 一旦 auto-tracking 写入 hash，
-   * pause 就被永久锁住。
-   *
-   * Resume：用户点 "back to bottom" 按钮（jumpToBottom）或自然滚回底部
-   * （handleScroll: user-paused → sticky）都会重新激活 autoscroll。
-   */
   useEffect(() => {
     if (hashTargetId) pauseAutoScroll();
   }, [hashTargetId, pauseAutoScroll]);
 
-  // 进入 chat 页面时立即拉取 agents + sessions
   useEffect(() => {
-    if (!active) return;
-    const hasAgents = active.agents && active.agents.length > 0;
-    const isStale =
-      !active.agentsFetchedAt ||
-      Date.now() - active.agentsFetchedAt > 60_000;
-    if (!hasAgents || isStale) {
-      loadAgents(active.id, !hasAgents);
+    if (currentSessionId) {
+      const loaded = useChatStore.getState().loadedHistoryBySession[currentSessionId];
+      const loading = useChatStore.getState().loadingHistoryBySession[currentSessionId];
+      if (!loaded && !loading) {
+        loadHistory(currentSessionId);
+      }
     }
-  }, [active?.id, loadAgents]);
+  }, [currentSessionId, loadHistory]);
 
-  useEffect(() => {
-    // 只要 session 还没拉过历史，就触发一次 loadHistory。
-    // 用 `loadedHistoryBySession` 而非 `messages.length === 0` 作为触发条件，
-    // 避免"消息为空就重新拉"的回环——同时保留对 race / LRU 过期场景的容错。
-    if (currentSessionId && active && !loadedHistory && !loadingHistory) {
-      loadHistory(currentSessionId);
-    }
-  }, [currentSessionId, active, loadedHistory, loadingHistory, loadHistory]);
-
-  /**
-   * 兜底：切换 session / 历史加载完毕时若没触发 RO（scrollHeight 未变）也滚到底。
-   * 依赖里不放 `messages` —— streaming 期间的滚动完全交给 useAutoScroll 内的 RO。
-   * 但如果有 hash 目标（深链 / scroll restoration），优先滚到 hash 而不是底。
-   */
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    if (hashTargetId) return; // VirtualMessageList 的 scrollToMessageId effect 会处理
+    if (hashTargetId) return;
     requestAnimationFrame(() => {
       el.scrollTo({ top: el.scrollHeight });
     });
   }, [currentSessionId, loadedHistory, hashTargetId]);
 
-  /**
-   * 用户滚动 → topmost 可见 message 变化 → 写回 URL hash（debounced 150ms 由
-   * VirtualMessageList 内部完成）。这里只接 onActiveMessageChange → writeMessageHash。
-   */
   const handleActiveMessageChange = useCallback((id: string | null) => {
     if (!id) return;
-    // silent: true → useHashScroll 看到这次 hashchange 时不更新 target state，
-    // 避免 ChatPanel 的 pauseAutoScroll effect 因"自写 hash"被反复触发，
-    // 永久 disable autoscroll（之前 reload 后 autoscroll 失活的根因）。
     writeMessageHash(id, { silent: true });
   }, []);
 
-  if (!active) {
-    return null;
-  }
-
-  const userId = active.userId;
-  const needUserId = !userId.trim();
-  // 当前选中的 agent（用来读 model id → 查 context window）
   const selectedAgent =
     agents.find((a) => a.id === selectedAgentId) ?? agents[0] ?? null;
 
   return (
     <div className="flex h-full flex-col">
-      {/* Slim Header — 只剩 context 进度 + new session 按钮。
-          Agent 选择内嵌在 MessageInput 底部那一行（AgentPicker）；
-          实例信息在 SessionList 顶部（InstanceInfoStrip）；
-          user_id 已在 MessageInput 内部展示。 */}
-      <div className="flex h-10 shrink-0 items-center justify-end gap-2 border-b border-border bg-background/60 px-4 backdrop-blur-sm">
-        <ContextProgressBar
-          currentTokens={currentInputTokens}
-          agent={selectedAgent}
-          modelId={currentModelId}
-        />
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => newSession(selectedAgentId ?? undefined)}
-          className="h-7 font-mono text-[11px]"
-        >
-          <Plus className="h-3 w-3" />
-          <span>new</span>
-        </Button>
-      </div>
+      {slots?.header ?? (
+        <div className="flex h-10 shrink-0 items-center justify-end gap-2 border-b border-border bg-background/60 px-4 backdrop-blur-sm">
+          <ContextProgressBar
+            currentTokens={currentInputTokens}
+            agent={selectedAgent}
+            modelId={currentModelId}
+          />
+          <ChatButton
+            variant="ghost"
+            size="sm"
+            onClick={() => newSession(selectedAgentId ?? undefined)}
+            className="h-7 font-mono text-[11px]"
+          >
+            <Plus className="h-3 w-3" />
+            <span>new</span>
+          </ChatButton>
+        </div>
+      )}
 
-      {/* Messages */}
       <div className="relative min-h-0 flex-1">
         <div
           ref={scrollRef}
@@ -200,12 +196,6 @@ export function ChatPanel() {
         >
           {currentSessionId && messages.length > 0 ? (
             <div className="mx-auto max-w-4xl py-6">
-              {/* key={cacheKey} 让 session 切换时完整 remount：
-                   - virtualizer 重新构造，initialMeasurementsCache 从
-                     TimelineCache 命中（之前 cacheKey 变化但 hook 实例
-                     不变是死代码）
-                   - 内部 useRef / MutationObserver / RAF scheduler 都重新初始化
-                     跨 session 不残留状态 */}
               <VirtualMessageList
                 key={currentSessionId}
                 messages={messages}
@@ -217,8 +207,6 @@ export function ChatPanel() {
               />
             </div>
           ) : currentSessionId && (loadingHistory || !loadedHistory) ? (
-            // 历史还没回来（或正在拉取）时显示 skeleton，
-            // 避免切到未打开过的 session 时跳一下 ChatEmptyState
             <ChatHistorySkeleton />
           ) : (
             <ChatEmptyState
@@ -228,62 +216,42 @@ export function ChatPanel() {
                 agents[0]?.name
               }
               onPrompt={(p) => {
-                if (needUserId) {
-                  setShowUserIdSetup(true);
-                  return;
-                }
                 if (!selectedAgentId && agents[0]) {
                   setSelectedAgent(agents[0].id);
                 }
                 sendMessage({ text: p });
               }}
               onNewSession={() => {
-                if (needUserId) {
-                  setShowUserIdSetup(true);
-                  return;
-                }
                 newSession(selectedAgentId ?? undefined);
               }}
-              needUserId={needUserId}
-              onSetupUserId={() => setShowUserIdSetup(true)}
             />
           )}
         </div>
 
         {!stickToBottom && messages.length > 0 && (
-          <Button
+          <ChatButton
             variant="outline"
             size="icon-sm"
             onClick={() => jumpToBottom(true)}
             className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full shadow-lg bg-card/95 backdrop-blur-sm border-border"
           >
             <ArrowDown className="h-3 w-3" />
-          </Button>
+          </ChatButton>
         )}
       </div>
 
-      {/* Input always at bottom */}
-      {currentSessionId && <MessageInput />}
+      {currentSessionId && (
+        <>
+          <MessageInput />
+          {slots?.inputFooter}
+        </>
+      )}
 
-      <UserIdSetupDialog
-        open={showUserIdSetup}
-        onOpenChange={setShowUserIdSetup}
-        instanceId={active.id}
-        instanceName={active.name}
-        force={needUserId}
-      />
+      {userIdSetupSlot}
     </div>
   );
 }
 
-/**
- * History loading skeleton — 切到一个还没拉过历史的 session 时显示，
- * 避免一闪 ChatEmptyState（用户描述的"先看到欢迎界面再切换到消息列表"问题）。
- *
- * 设计选择：仅显示中性 skeleton，不显示标题 / example prompt —— 因为
- * 这些信息属于 ChatEmptyState（"还没对话内容"）的语义；这里只是"正在加载"，
- * 用户应该看到的反馈是"在拉历史"，而不是被错误暗示"这是个空 session"。
- */
 function ChatHistorySkeleton() {
   return (
     <div className="mx-auto max-w-4xl space-y-6 px-6 py-10">
@@ -291,32 +259,28 @@ function ChatHistorySkeleton() {
         <Loader2 className="h-3 w-3 animate-spin" />
         <span>loading history…</span>
       </div>
-      {/* User bubble skeleton */}
       <div className="flex justify-end">
-        <Skeleton className="h-9 w-[55%]" />
+        <ChatSkeleton className="h-9 w-[55%]" />
       </div>
-      {/* Assistant turn skeleton */}
       <div className="space-y-3">
-        <Skeleton className="h-4 w-[88%]" />
-        <Skeleton className="h-4 w-[72%]" />
-        <Skeleton className="h-4 w-[40%]" />
-        {/* Tool-call card skeleton */}
+        <ChatSkeleton className="h-4 w-[88%]" />
+        <ChatSkeleton className="h-4 w-[72%]" />
+        <ChatSkeleton className="h-4 w-[40%]" />
         <div className="rounded-md border bg-card/40 p-3">
           <div className="flex items-center gap-2">
-            <Skeleton className="h-3.5 w-3.5 rounded-sm" />
-            <Skeleton className="h-3 w-32" />
+            <ChatSkeleton className="h-3.5 w-3.5 rounded-sm" />
+            <ChatSkeleton className="h-3 w-32" />
           </div>
           <div className="mt-2 space-y-1.5">
-            <Skeleton className="h-3 w-[60%]" />
-            <Skeleton className="h-3 w-[44%]" />
+            <ChatSkeleton className="h-3 w-[60%]" />
+            <ChatSkeleton className="h-3 w-[44%]" />
           </div>
         </div>
-        <Skeleton className="h-4 w-[80%]" />
-        <Skeleton className="h-4 w-[35%]" />
+        <ChatSkeleton className="h-4 w-[80%]" />
+        <ChatSkeleton className="h-4 w-[35%]" />
       </div>
-      {/* Another user bubble skeleton */}
       <div className="flex justify-end">
-        <Skeleton className="h-9 w-[40%]" />
+        <ChatSkeleton className="h-9 w-[40%]" />
       </div>
     </div>
   );
@@ -326,43 +290,14 @@ function ChatEmptyState({
   agentName,
   onPrompt,
   onNewSession,
-  needUserId,
-  onSetupUserId,
 }: {
   agentName?: string;
   onPrompt: (p: string) => void;
   onNewSession: () => void;
-  needUserId?: boolean;
-  onSetupUserId?: () => void;
 }) {
   return (
     <div className="flex h-full items-center justify-center px-6 py-10">
       <div className="w-full max-w-xl space-y-8 animate-fade-in">
-        {needUserId && (
-          <div className="rounded-md border border-warning/40 bg-warning/[0.04] p-3">
-            <div className="flex items-start gap-2">
-              <AlertTriangle className="h-4 w-4 text-warning shrink-0 mt-0.5" />
-              <div className="flex-1 space-y-1.5">
-                <div className="text-[13px] font-medium text-warning">
-                  还没有设置 user_id
-                </div>
-                <p className="text-[11.5px] text-muted-foreground">
-                  user_id 用于 AGNO 归类你的 session、memory 和 user-level 数据。
-                  设置后所有实例共用。
-                </p>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={onSetupUserId}
-                  className="mt-1 h-7 border-warning/50 text-warning"
-                >
-                  <User className="h-3 w-3 mr-1.5" />
-                  立即设置
-                </Button>
-              </div>
-            </div>
-          </div>
-        )}
 
         <div className="text-center">
           <div className="mx-auto mb-3 inline-flex items-center gap-2 rounded-full border border-accent/30 bg-accent/[0.04] px-2.5 py-1">
@@ -411,7 +346,7 @@ function ChatEmptyState({
         </div>
 
         <div className="text-center">
-          <Button
+          <ChatButton
             variant="ghost"
             size="sm"
             onClick={onNewSession}
@@ -419,7 +354,7 @@ function ChatEmptyState({
           >
             <Plus className="h-3 w-3" />
             new session
-          </Button>
+          </ChatButton>
         </div>
       </div>
     </div>
