@@ -16,6 +16,7 @@ import { useInstancesStore } from "./instances-store";
 import { useSessionsStore } from "./sessions-store";
 import { generateId } from "../lib/utils";
 import type { AgChatMessage, AgRunResponse } from "../lib/agno-types";
+import type { AgnoClient } from "../lib/agno-client";
 import {
   enqueueMessageUpdate,
   takePending,
@@ -374,6 +375,30 @@ interface ChatState {
   cancelRun: () => Promise<void>;
   continueRun: (toolResults: Array<{ tool_call_id: string; content: string }>) => Promise<void>;
   newSession: (agentId?: string) => string;
+
+  /**
+   * Injected AGNO client. Set at <ChatPanel> mount, cleared at unmount.
+   * Replaces the previous useInstancesStore.getState().getClient(activeId)
+   * pattern that coupled the store to app-specific instance management.
+   */
+  _client: AgnoClient | null;
+  /**
+   * Injected active agent ID. Replaces useInstancesStore.getState().activeInstanceId.
+   */
+  _agentId: string | null;
+  /**
+   * Injected user ID for the current session. Comes from the active AGNO instance's
+   * userId (or a default). Used by sendMessage when calling AGNO's session-scoped APIs.
+   */
+  _userId: string;
+  /**
+   * Inject the runtime context. Called by <ChatPanel> on mount/update.
+   */
+  setContext: (ctx: { client: AgnoClient; agentId: string; userId?: string }) => void;
+  /**
+   * Clear the runtime context. Called by <ChatPanel> on unmount.
+   */
+  clearContext: () => void;
 }
 
 /* ------------------------------------------------------------------ */
@@ -610,6 +635,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
   latestInputTokensBySession: {},
   latestOutputTokensBySession: {},
   latestModelIdBySession: {},
+  _client: null,
+  _agentId: null,
+  _userId: "",
 
   setSelectedAgent: (id, type = "agent") =>
     set({ selectedAgentId: id, selectedType: type }),
@@ -646,6 +674,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
       return { latestModelIdBySession: next };
     }),
+
+  setContext: (ctx) =>
+    set({
+      _client: ctx.client,
+      _agentId: ctx.agentId,
+      _userId: ctx.userId ?? "",
+    }),
+
+  clearContext: () =>
+    set({ _client: null, _agentId: null, _userId: "" }),
 
   setMessages: (sessionId, messages) =>
     set((s) => {
@@ -754,10 +792,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }),
 
   loadHistory: async (sessionId) => {
-    const activeId = useInstancesStore.getState().activeInstanceId;
-    if (!activeId) return;
-    const client = useInstancesStore.getState().getClient(activeId);
-    if (!client) return;
+    const client = get()._client;
+    const agentId = get()._agentId;
+    if (!client || !agentId) return;
     // in-flight token: 同一 sessionId 多次并发 loadHistory 时，
     // 只有最后一次的 setMessages 会落地。早于当前 generation 的回调
     // 直接 no-op，避免慢请求覆盖快请求的 state。
@@ -1761,19 +1798,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   sendMessage: async ({ text, files, sessionId, agentId }) => {
-    const instances = useInstancesStore.getState();
-    const activeId = instances.activeInstanceId;
-    if (!activeId) throw new Error("No active instance");
-    const client = instances.getClient(activeId);
+    const client = get()._client;
     if (!client) throw new Error("No client");
-    const activeInst = instances.instances.find((i) => i.id === activeId);
-    const effectiveUserId = activeInst?.userId?.trim() ?? "";
+    const ctxAgentId = get()._agentId;
+    if (!ctxAgentId) throw new Error("No active agent");
+    const effectiveUserId = get()._userId;
     if (!effectiveUserId) {
       throw new Error("未设置该实例的 user_id，无法发送消息");
     }
 
-    const targetAgentId =
-      agentId ?? get().selectedAgentId ?? instances.instances.find((i) => i.id === activeId)?.agents?.[0]?.id;
+    const targetAgentId = agentId ?? get().selectedAgentId ?? ctxAgentId;
     if (!targetAgentId) throw new Error("No agent selected");
 
     let targetSessionId =
@@ -1859,7 +1893,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         if (sid) {
           useSessionsStore
             .getState()
-            .upsertSession(activeId, {
+            .upsertSession(ctxAgentId, {
               session_id: sid,
               session_type: "agent",
               agent_id: targetAgentId,
@@ -1870,7 +1904,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       },
       onRunCompleted: () => {
         // 完成后刷新 session 列表
-        useSessionsStore.getState().loadSessions(activeId, true);
+        useSessionsStore.getState().loadSessions(ctxAgentId, true);
         // Shadow 已无意义——消息状态变 completed，下次 loadHistory 不会再
         // 触发 merge。避免长期累积。
         // 同时清理 sub-messages 的 shadow；team / multi-agent 场景下每个
@@ -1926,7 +1960,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (!runner) return;
     const runId = runner.getCurrentRunId();
     const agentId = get().selectedAgentId;
-    const activeId = useInstancesStore.getState().activeInstanceId;
     const topMsg = runner.getCurrentMessage();
     const sessionId =
       topMsg?.sessionId ??
@@ -1956,14 +1989,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
       walk(list);
     }
 
-    if (runId && agentId && activeId) {
-      const client = useInstancesStore.getState().getClient(activeId);
-      if (client) {
-        try {
-          await client.cancelAgentRun(agentId, runId);
-        } catch (err) {
-          console.warn("cancel failed", err);
-        }
+    const client = get()._client;
+    if (runId && agentId && client) {
+      try {
+        await client.cancelAgentRun(agentId, runId);
+      } catch (err) {
+        console.warn("cancel failed", err);
       }
     }
     set({ runner: null });
@@ -1975,14 +2006,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const runId = runner.getCurrentRunId();
     const sessionId = runner.getCurrentSessionId();
     const agentId = get().selectedAgentId;
-    const activeId = useInstancesStore.getState().activeInstanceId;
-    if (!runId || !agentId || !activeId) return;
-    const client = useInstancesStore.getState().getClient(activeId);
-    if (!client) return;
-    const activeInst = useInstancesStore
-      .getState()
-      .instances.find((i) => i.id === activeId);
-    const effectiveUserId = activeInst?.userId?.trim() ?? "";
+    const client = get()._client;
+    if (!runId || !agentId || !client) return;
+    const effectiveUserId = get()._userId;
     if (!effectiveUserId) return;
 
     const currentMessage = runner.getCurrentMessage();
@@ -2008,7 +2034,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       },
       onChunk: () => {},
       onRunCompleted: () => {
-        useSessionsStore.getState().loadSessions(activeId, true);
+        const ctxAgentId = get()._agentId;
+        if (ctxAgentId) useSessionsStore.getState().loadSessions(ctxAgentId, true);
       },
     };
 
