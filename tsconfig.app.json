@@ -23,8 +23,7 @@
 
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"],
-      "agno-chat": ["./packages/agno-chat/src/index.ts"]
+      "@/*": ["./src/*"]
     },
     "ignoreDeprecations": "6.0"
   },
