@@ -25,12 +25,9 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn, copyToClipboard, formatRelativeTime, truncate } from "../../lib/utils";
-import { useActiveInstance, useInstancesStore } from "@/stores/instances-store";
-import { useSessionsStore } from "@/stores/sessions-store";
-import { useChatStore } from "@/stores/chat-store";
+import { useSessionsStore } from "../../stores/sessions-store";
+import { useChatStore } from "../../stores/chat-store";
 import type { AgSessionSummary } from "../../lib/agno-types";
-import { Terminal } from "lucide-react";
-import { InstanceInfoStrip } from "./InstanceInfoStrip";
 
 const EMPTY_ARR: AgSessionSummary[] = [];
 
@@ -65,7 +62,7 @@ function shortSessionId(id: string): string {
 }
 
 export function SessionList() {
-  const active = useActiveInstance();
+  const agentId = useChatStore((s) => s._agentId);
   const loadSessions = useSessionsStore((s) => s.loadSessions);
   const loadMoreSessions = useSessionsStore((s) => s.loadMoreSessions);
   const loading = useSessionsStore((s) => s.loading);
@@ -74,16 +71,16 @@ export function SessionList() {
   const setSearchQuery = useSessionsStore((s) => s.setSearchQuery);
   const currentSessionId = useSessionsStore((s) => s.currentSessionId);
   const loadError = useSessionsStore((s) =>
-    active ? s.loadError[active.id] ?? null : null
+    agentId ? s.loadError[agentId] ?? null : null
   );
   const setCurrentSession = useSessionsStore((s) => s.setCurrentSession);
   const removeSession = useSessionsStore((s) => s.removeSession);
   const renameSession = useSessionsStore((s) => s.renameSession);
   const sessions = useSessionsStore((s) =>
-    active ? (s.byInstance[active.id] ?? EMPTY_ARR) : EMPTY_ARR
+    agentId ? (s.byAgent[agentId] ?? EMPTY_ARR) : EMPTY_ARR
   );
   const pagination = useSessionsStore((s) =>
-    active ? s.pagination[active.id] ?? null : null
+    agentId ? s.pagination[agentId] ?? null : null
   );
   const newSession = useChatStore((s) => s.newSession);
 
@@ -91,8 +88,8 @@ export function SessionList() {
   const [renameValue, setRenameValue] = useState("");
 
   useEffect(() => {
-    if (active) loadSessions(active.id);
-  }, [active, loadSessions]);
+    if (agentId) loadSessions(agentId);
+  }, [agentId, loadSessions]);
 
   const filtered = searchQuery.trim()
     ? sessions.filter((s: AgSessionSummary) =>
@@ -112,10 +109,6 @@ export function SessionList() {
 
   return (
     <div className="flex h-full flex-col">
-      {/* 实例信息：当前活跃实例的名字 + baseUrl + 探活状态。
-          放在 SessionList 最顶部，让用户随时能看到自己在操作哪个实例。 */}
-      <InstanceInfoStrip />
-
       {/* Header */}
       <div className="space-y-2.5 border-b border-sidebar-border px-3 py-3">
         <div className="flex items-center justify-between">
@@ -185,36 +178,10 @@ export function SessionList() {
                   </div>
                 </div>
               </div>
-              {loadError.includes("CORS") &&
-                active &&
-                /^https?:\/\//i.test(active.baseUrl) && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => {
-                      if (!active) return;
-                      const id = active.id;
-                      useInstancesStore
-                        .getState()
-                        .updateInstance(id, { baseUrl: "/api" });
-                      setTimeout(() => {
-                        useInstancesStore.getState().probeInstance(id);
-                        useInstancesStore
-                          .getState()
-                          .loadAgents(id, true);
-                        loadSessions(id, true);
-                      }, 100);
-                    }}
-                    className="h-6 w-full border-accent/40 text-[10.5px] text-accent"
-                  >
-                    <Terminal className="h-3 w-3 mr-1" />
-                    一键改用 /api
-                  </Button>
-                )}
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => active && loadSessions(active.id, true)}
+                onClick={() => agentId && loadSessions(agentId, true)}
                 className="h-6 w-full text-[10.5px]"
               >
                 <RefreshCw className="h-3 w-3 mr-1" />
@@ -252,7 +219,7 @@ export function SessionList() {
               onClick={() => setCurrentSession(s.session_id)}
               onDelete={() => {
                 if (confirm(`确定删除会话「${s.session_name ?? s.session_id}」？`)) {
-                  if (active) removeSession(active.id, s.session_id);
+                  if (agentId) removeSession(agentId, s.session_id);
                 }
               }}
               onRename={() => {
@@ -276,7 +243,7 @@ export function SessionList() {
                   variant="ghost"
                   size="sm"
                   disabled={loadingMore}
-                  onClick={() => active && loadMoreSessions(active.id)}
+                  onClick={() => agentId && loadMoreSessions(agentId)}
                   className="w-full h-7 text-[11px] text-muted-foreground hover:text-foreground"
                 >
                   {loadingMore ? (
@@ -310,7 +277,7 @@ export function SessionList() {
         </div>
       </ScrollArea>
 
-      {renameTarget && active && (
+      {renameTarget && agentId && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/85 backdrop-blur-sm">
           <div className="w-80 space-y-3 rounded-lg border bg-card p-4 shadow-xl">
             <div className="text-[13px] font-medium">重命名会话</div>
@@ -320,7 +287,7 @@ export function SessionList() {
               autoFocus
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
-                  renameSession(active.id, renameTarget.session_id, renameValue);
+                  renameSession(agentId, renameTarget.session_id, renameValue);
                   setRenameTarget(null);
                 }
                 if (e.key === "Escape") setRenameTarget(null);
@@ -333,7 +300,7 @@ export function SessionList() {
               <Button
                 size="sm"
                 onClick={() => {
-                  renameSession(active.id, renameTarget.session_id, renameValue);
+                  renameSession(agentId, renameTarget.session_id, renameValue);
                   setRenameTarget(null);
                 }}
               >
