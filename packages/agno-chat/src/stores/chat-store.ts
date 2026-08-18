@@ -12,7 +12,6 @@ import { create } from "zustand";
 import { ChatRunner } from "../lib/chat-runner";
 import type { ChatMessage, MessagePart, ToolCallPart } from "../lib/message-types";
 import { displayNameForRun } from "../lib/agent-name";
-import { useInstancesStore } from "./instances-store";
 import { useSessionsStore } from "./sessions-store";
 import { generateId } from "../lib/utils";
 import type { AgChatMessage, AgRunResponse } from "../lib/agno-types";
