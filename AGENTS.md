@@ -71,13 +71,14 @@ agno-desktop/
 ├── src/
 │   ├── main.tsx, App.tsx, index.css
 │   ├── components/
-│   │   ├── ui/          # shadcn-style base components (button, dialog, …)
 │   │   ├── layout/      # AppShell, AppTitleBar
-│   │   ├── chat/        # ChatPanel, MessageBubble, ReasoningBlock, ToolCallCard, ApprovalDialog, MessageInput
-│   │   ├── sessions/    # SessionList
-│   │   ├── instances/   # InstanceFormDialog, InstancesPanel
-│   │   ├── markdown/    # Markdown, CodeBlock
-│   │   └── common/      # Logo
+│   │   ├── instances/   # InstanceFormDialog, InstancesPanel (multi-instance only)
+│   │   └── common/      # Logo, UpdateToast
+│   ├── pages/           # ChatPage (thin wrapper), InstancesPage, SettingsPage, …
+│   ├── stores/          # instances-store, settings-store, updater-store (chat/sessions moved to agno-chat)
+│   ├── lib/             # tauri.ts, tauri-fetch.ts, updater.ts, storage.ts (pure logic moved to agno-chat)
+├── packages/
+│   └── agno-chat/       # Workspace package: AGNO chat component library (ui, stores, lib, components)
 │   ├── lib/             # Pure logic (no React)
 │   │   ├── agno-client.ts        # AGNO HTTP client
 │   │   ├── agno-types.ts         # AGNO API types
@@ -154,6 +155,17 @@ add to `agno-types.ts`, handle in `chat-runner.ts`, render in `MessageBubble.tsx
 | `settings-store` | User preferences (theme, auto-update toggle, …) |
 | `ui-store` | Ephemeral UI state (panels, modals) |
 | `updater-store` | Tauri updater state (shared globally — see 0.0.5 release note) |
+
+## Subpackage: agno-chat
+
+Lives at `packages/agno-chat/`. Workspace package; exposes `<ChatPanel>` for
+embedding AGNO chat into any React 19 app. Internal stores (chat-store,
+sessions-store) are parameterized with injected context and NOT part of the
+public API. Tailwind v4 CSS is shipped as source with `@source` directives
+so the app's Tailwind compiler picks up classes automatically.
+
+When working on chat internals, edit files in `packages/agno-chat/src/` — the
+app's vite config aliases `agno-chat` → that source for HMR.
 
 ### CORS — the single biggest gotcha
 

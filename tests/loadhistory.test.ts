@@ -52,9 +52,12 @@ function resetChat() {
     activeInstanceId: null,
     getClient: undefined as unknown as never,
   });
+  // v0.0.13+ chat-store 从 _client / _agentId 读
+  useChatStore.getState().clearContext();
 }
 
-/** 注册一个 mock instance + client，让 chat-store.loadHistory 能拉数据。 */
+/** 注册一个 mock client + agentId，让 chat-store.loadHistory 能拉数据。
+ * 兼容 v0.0.13+ 的 context 注入式 API。 */
 function installClient(
   instanceId: string,
   agentId: string,
@@ -63,6 +66,7 @@ function installClient(
     getSessionRuns: () => Promise<AgRunResponse[]>;
   }
 ) {
+  // 兼容旧的 instances-store 调用方（部分测试同时还在用 instances-store.activeInstanceId）
   useInstancesStore.setState({
     activeInstanceId: instanceId,
     instances: [
@@ -76,6 +80,8 @@ function installClient(
     ],
     getClient: ((_id: string) => client) as any,
   });
+  // 真正驱动 chat-store 的是这里的 _client / _agentId
+  useChatStore.getState().setContext({ client, agentId });
 }
 
 /* ========================================================================

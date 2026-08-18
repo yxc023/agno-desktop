@@ -14,6 +14,7 @@ import { useInstancesStore, type AgnoInstance } from "@/stores/instances-store";
 import { Loader2, CheckCircle2, XCircle, Terminal, AlertCircle, User } from "lucide-react";
 import { Textarea } from "@/components/ui/input";
 import { validateUserId } from "@/lib/user-id";
+import { createFetcher } from "@/lib/tauri-fetch";
 
 interface Props {
   open: boolean;
@@ -61,7 +62,11 @@ export function InstanceFormDialog({ open, instance, onOpenChange, onSuccess }: 
     setProbeResult(null);
     try {
       const { AgnoClient } = await import("@/lib/agno-client");
-      const client = new AgnoClient({ baseUrl, token: token || null });
+      const client = new AgnoClient({
+        baseUrl,
+        token: token || null,
+        fetcher: createFetcher(),
+      });
       const info = await client.info();
       setProbeResult({ ok: true, info });
     } catch (err) {

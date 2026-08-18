@@ -1,7 +1,7 @@
 /**
  * tests/sessions-store.test.ts
  *
- * sessions-store 的核心契约：
+ * sessions-store 的核心契约（v0.0.13+）：
  *   - 初始 loadSessions 用 limit=15, page=1
  *   - loadMoreSessions 拉下一页并 append
  *   - hasMore / totalCount 来自 meta.total_count
@@ -10,16 +10,15 @@
  *   - removeSession 同步减 totalCount
  *   - session_id 去重（防御 AGNO 在 page 边界偶发重复）
  *   - 缓存命中：未 force 时不重新拉
+ *   - _agentId / _client / _userId 通过 setContext 注入；测试用 setContext
+ *     把 mock client + agentId 注入到 store
  *
  * AGNO /sessions 接口在某些版本上 limit=100 很慢。把默认拉取量降到 15，
  * 后续让用户主动点"加载更多"。本测试守住"少拉、按需拉"的核心契约。
- *
- * 后续要补的实例管理 / search / rename / delete 相关测试也加到这里。
  */
 /* oxlint-disable */
 
 import { useSessionsStore } from "../src/stores/sessions-store";
-import { useInstancesStore } from "../src/stores/instances-store";
 import type { AgSessionSummary, AgPaginatedResponse } from "../src/lib/agno-types";
 
 // ─────────── assert framework ───────────
@@ -62,58 +61,50 @@ function makePaginatedResponse(
 }
 
 /**
- * 挂一个 mock instance + mock client，让 sessions-store 能拉数据。
- * page=1 响应通过 `responses[1]` 注入；page=2 / page=3 同理。
+ * 把 mock client + agentId + userId 注入到 sessions-store（v0.0.13+ 用 setContext
+ * 而非 useInstancesStore）。返回 restore() 用于测试间清理。
  */
-function setupMockInstance(opts?: {
+function setupMockContext(opts?: {
   responses?: Record<number, AgPaginatedResponse<AgSessionSummary>>;
+  agentId?: string;
+  userId?: string;
+  listSessionsImpl?: (params: any) => Promise<AgPaginatedResponse<AgSessionSummary>>;
 }) {
+  const agentId = opts?.agentId ?? "agent-1";
+  const userId = opts?.userId;
   const responses = opts?.responses ?? {};
-  const listSessions = async (params: { page?: number; limit?: number }) => {
-    const page = params?.page ?? 1;
-    if (responses[page]) return responses[page];
-    return makePaginatedResponse([], { total_count: 0, total_pages: 0 });
-  };
+  const listSessionsImpl =
+    opts?.listSessionsImpl ??
+    (async (params: { page?: number; limit?: number }) => {
+      const page = params?.page ?? 1;
+      if (responses[page]) return responses[page];
+      return makePaginatedResponse([], { total_count: 0, total_pages: 0 });
+    });
 
   const mockClient = {
-    listSessions,
+    listSessions: listSessionsImpl,
     deleteSession: async () => {},
   };
 
-  const origGetClient = useInstancesStore.getState().getClient;
-  useInstancesStore.setState({
-    instances: [
-      {
-        id: "inst-1",
-        name: "mock",
-        baseUrl: "http://x",
-        lastProbeAt: Date.now(),
-        agents: [],
-        lastInfo: null,
-        agentsFetchedAt: 0,
-      } as any,
-    ],
-    activeInstanceId: "inst-1",
-    getClient: ((id: string) =>
-      id === "inst-1" ? (mockClient as any) : null) as any,
+  useSessionsStore.getState().setContext({
+    client: mockClient as any,
+    agentId,
+    userId,
   });
 
   return {
-    instanceId: "inst-1",
-    listSessions,
+    agentId,
+    userId,
+    listSessions: listSessionsImpl,
     restore: () => {
-      useInstancesStore.setState({
-        instances: [],
-        activeInstanceId: null,
-        getClient: origGetClient,
-      });
+      useSessionsStore.getState().clearContext();
     },
   };
 }
 
 function resetSessionsStore() {
   useSessionsStore.setState({
-    byInstance: {},
+    byAgent: {},
     pagination: {},
     sessionsUserId: {},
     loading: false,
@@ -128,7 +119,7 @@ async function main(): Promise<void> {
   console.log("=== 初始 loadSessions 用 limit=15 page=1 ===");
   {
     resetSessionsStore();
-    const ctx = setupMockInstance({
+    const ctx = setupMockContext({
       responses: {
         1: makePaginatedResponse(
           Array.from({ length: 15 }, (_, i) => `s-${i + 1}`),
@@ -139,9 +130,9 @@ async function main(): Promise<void> {
     try {
       const list = await useSessionsStore
         .getState()
-        .loadSessions(ctx.instanceId);
+        .loadSessions(ctx.agentId);
       eq(list.length, 15, "首次返回 15 条");
-      const pg = useSessionsStore.getState().pagination[ctx.instanceId];
+      const pg = useSessionsStore.getState().pagination[ctx.agentId];
       assert(pg !== null && pg !== undefined, "pagination 已记录");
       eq(pg?.page, 1, "page = 1");
       eq(pg?.limit, 15, "limit = 15");
@@ -155,7 +146,7 @@ async function main(): Promise<void> {
   console.log("\n=== loadMoreSessions 拉下一页并 append ===");
   {
     resetSessionsStore();
-    const ctx = setupMockInstance({
+    const ctx = setupMockContext({
       responses: {
         1: makePaginatedResponse(
           Array.from({ length: 15 }, (_, i) => `s-${i + 1}`),
@@ -172,18 +163,18 @@ async function main(): Promise<void> {
       },
     });
     try {
-      await useSessionsStore.getState().loadSessions(ctx.instanceId);
-      await useSessionsStore.getState().loadMoreSessions(ctx.instanceId);
-      const list = useSessionsStore.getState().byInstance[ctx.instanceId];
+      await useSessionsStore.getState().loadSessions(ctx.agentId);
+      await useSessionsStore.getState().loadMoreSessions(ctx.agentId);
+      const list = useSessionsStore.getState().byAgent[ctx.agentId];
       eq(list.length, 30, "page1 + page2 = 30 条");
-      const pg = useSessionsStore.getState().pagination[ctx.instanceId];
+      const pg = useSessionsStore.getState().pagination[ctx.agentId];
       eq(pg?.page, 2, "page = 2");
       eq(pg?.hasMore, true, "还有 page 3 → hasMore = true");
 
-      await useSessionsStore.getState().loadMoreSessions(ctx.instanceId);
-      const list2 = useSessionsStore.getState().byInstance[ctx.instanceId];
+      await useSessionsStore.getState().loadMoreSessions(ctx.agentId);
+      const list2 = useSessionsStore.getState().byAgent[ctx.agentId];
       eq(list2.length, 42, "page1+2+3 = 42 条");
-      const pg2 = useSessionsStore.getState().pagination[ctx.instanceId];
+      const pg2 = useSessionsStore.getState().pagination[ctx.agentId];
       eq(pg2?.page, 3, "page = 3");
       eq(pg2?.hasMore, false, "已是最后一页 → hasMore = false");
     } finally {
@@ -194,7 +185,7 @@ async function main(): Promise<void> {
   console.log("\n=== hasMore=false 时 loadMore no-op ===");
   {
     resetSessionsStore();
-    const ctx = setupMockInstance({
+    const ctx = setupMockContext({
       responses: {
         1: makePaginatedResponse(
           Array.from({ length: 5 }, (_, i) => `s-${i + 1}`),
@@ -203,12 +194,11 @@ async function main(): Promise<void> {
       },
     });
     try {
-      await useSessionsStore.getState().loadSessions(ctx.instanceId);
-      const before = useSessionsStore.getState().byInstance[ctx.instanceId]
+      await useSessionsStore.getState().loadSessions(ctx.agentId);
+      const before = useSessionsStore.getState().byAgent[ctx.agentId]
         .length;
-      await useSessionsStore.getState().loadMoreSessions(ctx.instanceId);
-      const after = useSessionsStore.getState().byInstance[ctx.instanceId]
-        .length;
+      await useSessionsStore.getState().loadMoreSessions(ctx.agentId);
+      const after = useSessionsStore.getState().byAgent[ctx.agentId].length;
       eq(after, before, "hasMore=false 时不追加");
     } finally {
       ctx.restore();
@@ -219,39 +209,40 @@ async function main(): Promise<void> {
   {
     resetSessionsStore();
     let page2Calls = 0;
-    const ctx = setupMockInstance({
+    const ctx = setupMockContext({
       responses: {
         1: makePaginatedResponse(
           Array.from({ length: 15 }, (_, i) => `s-${i + 1}`),
           { total_count: 30, total_pages: 2 }
         ),
       },
+      listSessionsImpl: async (params: any) => {
+        if (params?.page === 2) {
+          page2Calls++;
+          await new Promise((r) => setTimeout(r, 20));
+          return makePaginatedResponse(
+            Array.from({ length: 15 }, (_, i) => `s-${i + 16}`),
+            { total_count: 30, total_pages: 2 }
+          );
+        }
+        if (params?.page === 1) {
+          return makePaginatedResponse(
+            Array.from({ length: 15 }, (_, i) => `s-${i + 1}`),
+            { total_count: 30, total_pages: 2 }
+          );
+        }
+        return makePaginatedResponse([], { total_count: 0, total_pages: 0 });
+      },
     });
-    const origClient = (useInstancesStore.getState().getClient as any)(
-      ctx.instanceId
-    );
-    origClient.listSessions = async (params: any) => {
-      if (params?.page === 2) {
-        page2Calls++;
-        // 模拟慢请求，确保 3 个并发调用能进入同一个 loadingMore 锁
-        await new Promise((r) => setTimeout(r, 20));
-        return makePaginatedResponse(
-          Array.from({ length: 15 }, (_, i) => `s-${i + 16}`),
-          { total_count: 30, total_pages: 2 }
-        );
-      }
-      return ctx.listSessions(params);
-    };
     try {
-      await useSessionsStore.getState().loadSessions(ctx.instanceId);
-      // 并发触发 3 次 loadMore
+      await useSessionsStore.getState().loadSessions(ctx.agentId);
       await Promise.all([
-        useSessionsStore.getState().loadMoreSessions(ctx.instanceId),
-        useSessionsStore.getState().loadMoreSessions(ctx.instanceId),
-        useSessionsStore.getState().loadMoreSessions(ctx.instanceId),
+        useSessionsStore.getState().loadMoreSessions(ctx.agentId),
+        useSessionsStore.getState().loadMoreSessions(ctx.agentId),
+        useSessionsStore.getState().loadMoreSessions(ctx.agentId),
       ]);
       eq(page2Calls, 1, "page=2 只调用一次（loadingMore 锁）");
-      const list = useSessionsStore.getState().byInstance[ctx.instanceId];
+      const list = useSessionsStore.getState().byAgent[ctx.agentId];
       eq(list.length, 30, "最终 30 条（没有重复追加）");
     } finally {
       ctx.restore();
@@ -261,14 +252,13 @@ async function main(): Promise<void> {
   console.log("\n=== session_id 重复时去重 ===");
   {
     resetSessionsStore();
-    const ctx = setupMockInstance({
+    const ctx = setupMockContext({
       responses: {
         1: makePaginatedResponse(
           Array.from({ length: 15 }, (_, i) => `s-${i + 1}`),
           { total_count: 30, total_pages: 2 }
         ),
         2: makePaginatedResponse(
-          // page2 重复了 page1 的最后 5 条（模拟 AGNO 偶发重复）
           [
             ...Array.from({ length: 5 }, (_, i) => `s-${i + 11}`),
             ...Array.from({ length: 10 }, (_, i) => `s-${i + 16}`),
@@ -278,9 +268,9 @@ async function main(): Promise<void> {
       },
     });
     try {
-      await useSessionsStore.getState().loadSessions(ctx.instanceId);
-      await useSessionsStore.getState().loadMoreSessions(ctx.instanceId);
-      const list = useSessionsStore.getState().byInstance[ctx.instanceId];
+      await useSessionsStore.getState().loadSessions(ctx.agentId);
+      await useSessionsStore.getState().loadMoreSessions(ctx.agentId);
+      const list = useSessionsStore.getState().byAgent[ctx.agentId];
       eq(list.length, 25, "重复的 session_id 被去重");
     } finally {
       ctx.restore();
@@ -290,7 +280,7 @@ async function main(): Promise<void> {
   console.log("\n=== removeSession 同步 totalCount ===");
   {
     resetSessionsStore();
-    const ctx = setupMockInstance({
+    const ctx = setupMockContext({
       responses: {
         1: makePaginatedResponse(
           Array.from({ length: 15 }, (_, i) => `s-${i + 1}`),
@@ -299,13 +289,13 @@ async function main(): Promise<void> {
       },
     });
     try {
-      await useSessionsStore.getState().loadSessions(ctx.instanceId);
+      await useSessionsStore.getState().loadSessions(ctx.agentId);
       await useSessionsStore
         .getState()
-        .removeSession(ctx.instanceId, "s-1");
-      const pg = useSessionsStore.getState().pagination[ctx.instanceId];
+        .removeSession(ctx.agentId, "s-1");
+      const pg = useSessionsStore.getState().pagination[ctx.agentId];
       eq(pg?.totalCount, 41, "删除一条后 totalCount -1");
-      const list = useSessionsStore.getState().byInstance[ctx.instanceId];
+      const list = useSessionsStore.getState().byAgent[ctx.agentId];
       eq(list.length, 14, "列表同步 -1");
       assert(!list.find((s) => s.session_id === "s-1"), "s-1 已被移除");
     } finally {
@@ -316,7 +306,7 @@ async function main(): Promise<void> {
   console.log("\n=== total_count 缺失时从 list.length 兜底 ===");
   {
     resetSessionsStore();
-    const ctx = setupMockInstance({
+    const ctx = setupMockContext({
       responses: {
         1: {
           data: Array.from({ length: 15 }, (_, i) =>
@@ -327,8 +317,8 @@ async function main(): Promise<void> {
       },
     });
     try {
-      await useSessionsStore.getState().loadSessions(ctx.instanceId);
-      const pg = useSessionsStore.getState().pagination[ctx.instanceId];
+      await useSessionsStore.getState().loadSessions(ctx.agentId);
+      const pg = useSessionsStore.getState().pagination[ctx.agentId];
       eq(pg?.totalCount, 15, "totalCount 兜底为 list.length");
       eq(pg?.hasMore, false, "total_pages=1 → 无更多");
     } finally {
@@ -340,27 +330,26 @@ async function main(): Promise<void> {
   {
     resetSessionsStore();
     let callCount = 0;
-    const ctx = setupMockInstance({
+    const ctx = setupMockContext({
       responses: {
         1: makePaginatedResponse(
           Array.from({ length: 15 }, (_, i) => `s-${i + 1}`),
           { total_count: 15, total_pages: 1 }
         ),
       },
+      listSessionsImpl: async (params: any) => {
+        callCount++;
+        return makePaginatedResponse(
+          Array.from({ length: 15 }, (_, i) => `s-${i + 1}`),
+          { total_count: 15, total_pages: 1 }
+        );
+      },
     });
-    const origClient = (useInstancesStore.getState().getClient as any)(
-      ctx.instanceId
-    );
-    origClient.listSessions = async (params: any) => {
-      callCount++;
-      return ctx.listSessions(params);
-    };
     try {
-      await useSessionsStore.getState().loadSessions(ctx.instanceId);
-      await useSessionsStore.getState().loadSessions(ctx.instanceId);
+      await useSessionsStore.getState().loadSessions(ctx.agentId);
+      await useSessionsStore.getState().loadSessions(ctx.agentId);
       eq(callCount, 1, "第二次 loadSessions 没触发新请求（缓存命中）");
-      // force=true 会重新拉
-      await useSessionsStore.getState().loadSessions(ctx.instanceId, true);
+      await useSessionsStore.getState().loadSessions(ctx.agentId, true);
       eq(callCount, 2, "force=true 强制重新拉");
     } finally {
       ctx.restore();
@@ -373,40 +362,35 @@ async function main(): Promise<void> {
 }
 
 // ────────────────────────────────────────────────────────────────
-//  user_id 过滤（per-instance userId 隔离）
+//  user_id 过滤（通过 _userId 注入）
 // ────────────────────────────────────────────────────────────────
 
 async function userIdTests(): Promise<void> {
-  console.log("\n=== loadSessions 把 instance.userId 透传给 listSessions ===");
+  console.log("\n=== loadSessions 把 _userId 透传给 listSessions ===");
   {
     resetSessionsStore();
     let lastParams: any = null;
-    const ctx = setupMockInstance({
+    const ctx = setupMockContext({
+      userId: "mike",
       responses: {
         1: {
           data: [makeSession("s-1"), makeSession("s-2")],
           meta: { limit: 15, page: 1, total_count: 2, total_pages: 1 },
         },
       },
+      listSessionsImpl: async (params: any) => {
+        lastParams = params;
+        return {
+          data: [makeSession("s-1"), makeSession("s-2")],
+          meta: { limit: 15, page: 1, total_count: 2, total_pages: 1 },
+        };
+      },
     });
-    // 给 instance 加 userId
-    useInstancesStore.setState((s) => ({
-      instances: s.instances.map((i) =>
-        i.id === ctx.instanceId ? { ...i, userId: "mike" } : i
-      ),
-    }));
-    const origClient = (useInstancesStore.getState().getClient as any)(
-      ctx.instanceId
-    );
-    origClient.listSessions = async (params: any) => {
-      lastParams = params;
-      return ctx.listSessions(params);
-    };
     try {
-      await useSessionsStore.getState().loadSessions(ctx.instanceId);
+      await useSessionsStore.getState().loadSessions(ctx.agentId);
       eq(lastParams?.user_id, "mike", "listSessions 收到 user_id='mike'");
       eq(
-        useSessionsStore.getState().sessionsUserId[ctx.instanceId],
+        useSessionsStore.getState().sessionsUserId[ctx.agentId],
         "mike",
         "sessionsUserId 记录 mike"
       );
@@ -415,27 +399,27 @@ async function userIdTests(): Promise<void> {
     }
   }
 
-  console.log("\n=== instance.userId 为空时不传 user_id ===");
+  console.log("\n=== userId 为空时不传 user_id ===");
   {
     resetSessionsStore();
     let lastParams: any = null;
-    const ctx = setupMockInstance({
+    const ctx = setupMockContext({
       responses: {
         1: {
           data: [makeSession("s-1")],
           meta: { limit: 15, page: 1, total_count: 1, total_pages: 1 },
         },
       },
+      listSessionsImpl: async (params: any) => {
+        lastParams = params;
+        return {
+          data: [makeSession("s-1")],
+          meta: { limit: 15, page: 1, total_count: 1, total_pages: 1 },
+        };
+      },
     });
-    const origClient = (useInstancesStore.getState().getClient as any)(
-      ctx.instanceId
-    );
-    origClient.listSessions = async (params: any) => {
-      lastParams = params;
-      return ctx.listSessions(params);
-    };
     try {
-      await useSessionsStore.getState().loadSessions(ctx.instanceId);
+      await useSessionsStore.getState().loadSessions(ctx.agentId);
       assert(
         !("user_id" in (lastParams ?? {})) || lastParams?.user_id === undefined,
         "user_id 未透传（undefined）"
@@ -448,26 +432,19 @@ async function userIdTests(): Promise<void> {
   console.log("\n=== 服务端返回混合 user_id 时客户端 defensive 过滤 ===");
   {
     resetSessionsStore();
-    const ctx = setupMockInstance({});
-    // 服务端不严格按 user_id 过滤，返回了别人的 session
-    useInstancesStore.setState((s) => ({
-      instances: s.instances.map((i) =>
-        i.id === ctx.instanceId ? { ...i, userId: "mike" } : i
-      ),
-    }));
-    const origClient = (useInstancesStore.getState().getClient as any)(
-      ctx.instanceId
-    );
-    origClient.listSessions = async () => ({
-      data: [
-        { ...makeSession("s-mike-1"), user_id: "mike" },
-        { ...makeSession("s-alice-1"), user_id: "alice" },
-        { ...makeSession("s-no-uid"), user_id: undefined },
-      ],
-      meta: { limit: 15, page: 1, total_count: 3, total_pages: 1 },
+    const ctx = setupMockContext({
+      userId: "mike",
+      listSessionsImpl: async () => ({
+        data: [
+          { ...makeSession("s-mike-1"), user_id: "mike" },
+          { ...makeSession("s-alice-1"), user_id: "alice" },
+          { ...makeSession("s-no-uid"), user_id: undefined },
+        ],
+        meta: { limit: 15, page: 1, total_count: 3, total_pages: 1 },
+      }),
     });
     try {
-      const list = await useSessionsStore.getState().loadSessions(ctx.instanceId);
+      const list = await useSessionsStore.getState().loadSessions(ctx.agentId);
       eq(list.length, 2, "只保留 mike 的 + 无 user_id 的（兜底），过滤掉 alice");
       assert(
         list.find((s) => s.session_id === "s-mike-1"),
@@ -481,55 +458,42 @@ async function userIdTests(): Promise<void> {
         !list.find((s) => s.session_id === "s-alice-1"),
         "过滤掉 alice 的 session"
       );
-      const pg = useSessionsStore.getState().pagination[ctx.instanceId];
-      // totalCount 信任服务端 meta（即便服务端"未严格过滤"给了 total_count=3，
-      // 我们也按 meta 走；翻完所有页后 hasMore 自然变 false，靠 client filter 隔离显示）。
+      const pg = useSessionsStore.getState().pagination[ctx.agentId];
       eq(pg?.totalCount, 3, "totalCount 来自 meta.total_count");
     } finally {
       ctx.restore();
     }
   }
 
-  console.log("\n=== 改 instance.userId → 下次 loadSessions 强制重拉 ===");
+  console.log("\n=== 改 userId → 下次 loadSessions 强制重拉 ===");
   {
     resetSessionsStore();
     let callCount = 0;
-    const ctx = setupMockInstance({
-      responses: {
-        1: {
+    const ctx = setupMockContext({
+      userId: "mike",
+      listSessionsImpl: async () => {
+        callCount++;
+        return {
           data: [makeSession("s-1")],
           meta: { limit: 15, page: 1, total_count: 1, total_pages: 1 },
-        },
+        };
       },
     });
-    useInstancesStore.setState((s) => ({
-      instances: s.instances.map((i) =>
-        i.id === ctx.instanceId ? { ...i, userId: "mike" } : i
-      ),
-    }));
-    const origClient = (useInstancesStore.getState().getClient as any)(
-      ctx.instanceId
-    );
-    origClient.listSessions = async (params: any) => {
-      callCount++;
-      return ctx.listSessions(params);
-    };
     try {
-      await useSessionsStore.getState().loadSessions(ctx.instanceId);
+      await useSessionsStore.getState().loadSessions(ctx.agentId);
       eq(callCount, 1, "首次拉 1 次");
-      await useSessionsStore.getState().loadSessions(ctx.instanceId);
+      await useSessionsStore.getState().loadSessions(ctx.agentId);
       eq(callCount, 1, "userId 未变 + 有缓存 → 不重拉");
 
-      // 改 userId
-      useInstancesStore.setState((s) => ({
-        instances: s.instances.map((i) =>
-          i.id === ctx.instanceId ? { ...i, userId: "alice" } : i
-        ),
-      }));
-      await useSessionsStore.getState().loadSessions(ctx.instanceId);
+      useSessionsStore.getState().setContext({
+        client: useSessionsStore.getState()._client,
+        agentId: ctx.agentId,
+        userId: "alice",
+      });
+      await useSessionsStore.getState().loadSessions(ctx.agentId);
       eq(callCount, 2, "userId 变了 → 强制重拉");
       eq(
-        useSessionsStore.getState().sessionsUserId[ctx.instanceId],
+        useSessionsStore.getState().sessionsUserId[ctx.agentId],
         "alice",
         "sessionsUserId 更新到 alice"
       );
@@ -542,33 +506,22 @@ async function userIdTests(): Promise<void> {
   {
     resetSessionsStore();
     const seenParams: any[] = [];
-    const ctx = setupMockInstance({
-      responses: {
-        1: makePaginatedResponse(
-          Array.from({ length: 15 }, (_, i) => `s-${i + 1}`),
+    const ctx = setupMockContext({
+      userId: "mike",
+      listSessionsImpl: async (params: any) => {
+        seenParams.push(params);
+        const page = params?.page ?? 1;
+        return makePaginatedResponse(
+          Array.from({ length: 15 }, (_, i) =>
+            page === 1 ? `s-${i + 1}` : `s-${i + 16}`
+          ),
           { total_count: 30, total_pages: 2 }
-        ),
-        2: makePaginatedResponse(
-          Array.from({ length: 15 }, (_, i) => `s-${i + 16}`),
-          { total_count: 30, total_pages: 2 }
-        ),
+        );
       },
     });
-    useInstancesStore.setState((s) => ({
-      instances: s.instances.map((i) =>
-        i.id === ctx.instanceId ? { ...i, userId: "mike" } : i
-      ),
-    }));
-    const origClient = (useInstancesStore.getState().getClient as any)(
-      ctx.instanceId
-    );
-    origClient.listSessions = async (params: any) => {
-      seenParams.push(params);
-      return ctx.listSessions(params);
-    };
     try {
-      await useSessionsStore.getState().loadSessions(ctx.instanceId);
-      await useSessionsStore.getState().loadMoreSessions(ctx.instanceId);
+      await useSessionsStore.getState().loadSessions(ctx.agentId);
+      await useSessionsStore.getState().loadMoreSessions(ctx.agentId);
       eq(seenParams.length, 2, "load + loadMore 共 2 次请求");
       eq(seenParams[0]?.user_id, "mike", "load 透传 mike");
       eq(seenParams[1]?.user_id, "mike", "loadMore 也透传 mike");
@@ -580,7 +533,7 @@ async function userIdTests(): Promise<void> {
   console.log("\n=== clearSessionsCache 清掉缓存 + pagination + sessionsUserId ===");
   {
     resetSessionsStore();
-    const ctx = setupMockInstance({
+    const ctx = setupMockContext({
       responses: {
         1: makePaginatedResponse(
           Array.from({ length: 5 }, (_, i) => `s-${i + 1}`),
@@ -589,22 +542,22 @@ async function userIdTests(): Promise<void> {
       },
     });
     try {
-      await useSessionsStore.getState().loadSessions(ctx.instanceId);
+      await useSessionsStore.getState().loadSessions(ctx.agentId);
       assert(
-        useSessionsStore.getState().byInstance[ctx.instanceId]?.length === 5,
+        useSessionsStore.getState().byAgent[ctx.agentId]?.length === 5,
         "缓存有 5 条"
       );
-      useSessionsStore.getState().clearSessionsCache(ctx.instanceId);
+      useSessionsStore.getState().clearSessionsCache(ctx.agentId);
       assert(
-        !useSessionsStore.getState().byInstance[ctx.instanceId],
-        "byInstance 清掉"
+        !useSessionsStore.getState().byAgent[ctx.agentId],
+        "byAgent 清掉"
       );
       assert(
-        !useSessionsStore.getState().pagination[ctx.instanceId],
+        !useSessionsStore.getState().pagination[ctx.agentId],
         "pagination 清掉"
       );
       assert(
-        !useSessionsStore.getState().sessionsUserId[ctx.instanceId],
+        !useSessionsStore.getState().sessionsUserId[ctx.agentId],
         "sessionsUserId 清掉"
       );
     } finally {

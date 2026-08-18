@@ -2,7 +2,25 @@
 
 All notable changes to Agno Desktop are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## [0.0.13] - 2026-08-18
+
+### Added
+- **New workspace package `agno-chat`** (`packages/agno-chat/`) — exposes `<ChatPanel>` for embedding AGNO AgentOS chat into any React 19 app. Drops in via `import { ChatPanel } from "agno-chat"` plus `import "agno-chat/styles.css"`. Internally owns the AGNO client, chat runner, SSE parser, session management, message store, and all chat-related UI components. Themeable via CSS variables (`--agno-accent`, `--agno-radius`, etc.). App package.json slimmed by ~23 deps (now provided transitively).
+
+### Changed
+- **Monorepo restructure.** Root `package.json` now declares `"workspaces": ["packages/*"]`. Chat surface moved to `packages/agno-chat/src/`. App layer keeps multi-instance management, routing, settings, updater, Tauri shell. `packages/agno-chat/src/stores/chat-store.ts` and `sessions-store.ts` parameterized with injected context (`_client`/`_agentId`/`_userId`) instead of coupling to `useInstancesStore`.
+- **ChatPage simplified.** `src/pages/ChatPage.tsx` now a thin wrapper (~100 lines) that reads active instance and renders `<ChatPanel>`.
+- **ChatPanel rewritten.** Package's ChatPanel no longer imports app-level stores (settings-store, instances-store). Accepts settings/agents/callbacks via props. AgentPicker, MessageInput, ContextProgressBar all thread instance info via props.
+- **Single-singleton ui-store / settings-store.** `packages/agno-chat/src/stores/ui-store.ts` 和 `settings-store.ts` 现在拥有 chat 子系统需要的所有字段（包括 `instancesPanelOpen` / `showAddInstance` / `instancesPanelOpen` 等 app chrome 状态）。`src/stores/ui-store.ts` 和 `settings-store.ts` 改为 re-export shim，app 和包共享同一个 zustand store 实例——不再有 dual-store 同步 bug。
+- **Sessions store keyed by `agentId` (was `instanceId`).** `packages/agno-chat/src/stores/sessions-store.ts:56` 把 `byInstance` 重命名为 `byAgent`；`loadSessions(agentId)` / `loadMoreSessions(agentId)` / `removeSession(agentId, ...)` 等动作签名同步更新。理由：AGNO 的 agent id 全局唯一（服务端生成），跟 UI 上 "agent 切换" 概念一致。
+
+### Removed
+- **`src/components/chat/` 下 10 个老组件** — `ChatPanel.tsx` (427 行) / `AgentPicker.tsx` / `MessageInput.tsx` / `MessageBubble.tsx` / `MessageContent.tsx` / `ToolCallCard.tsx` / `ToolCallGroup.tsx` / `ReasoningBlock.tsx` / `ContextProgressBar.tsx` / `VirtualMessageList.tsx`。这些都是包内版本的旧拷贝，现在由 `<ChatPanel>` (package) 渲染。`src/components/chat/ApprovalDialog.tsx` / `SubAgentSidePanel.tsx` / `FilePreviewPanel.tsx` 也删除——三个 singleton 由包的 `<ChatPanel>` 包装器在 mount 时挂载一次，避免 ChatPage 重复 mount 导致双订阅。
+- **`packages/agno-chat/src/stores/instances-store.ts`** (stub) — 包内的 AgentPicker 改成接收 `instance` / `agents` / `loadingAgents` / `onRefreshAgents` / `onFixCors` props，不再依赖 instances-store；stub 删除。
+- **`src/types/agno-chat.d.ts`** — 旧的 ambient module 声明与 package 实际 API 不一致；删除并依赖 tsconfig `paths` 解析到 `packages/agno-chat/src/index.ts`。
+
+### Notes
+- Switching AGNO instances uses `<ChatPanel key={`${instId}-${agentId}`}>` — React remount drops old state cleanly.
 
 ## [0.0.12] - 2026-08-07
 

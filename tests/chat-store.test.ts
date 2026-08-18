@@ -48,6 +48,30 @@ function resetStores() {
     activeInstanceId: null,
     getClient: undefined as unknown as never,
   });
+  // v0.0.13+ chat-store 从 _client / _agentId 读，不再走 useInstancesStore
+  useChatStore.getState().clearContext();
+  useSessionsStore.getState().clearContext();
+}
+
+/** 把 mock client + agentId + userId 注入到 chat-store / sessions-store。
+ * 兼容 v0.0.13+ 的 context 注入式 API（替代旧的 useInstancesStore mock）。 */
+function installMockClient(opts: {
+  agentId?: string;
+  userId?: string;
+  client: any;
+}) {
+  const agentId = opts.agentId ?? "fake-agent";
+  const userId = opts.userId ?? "";
+  useChatStore.getState().setContext({
+    client: opts.client,
+    agentId,
+    userId,
+  });
+  useSessionsStore.getState().setContext({
+    client: opts.client,
+    agentId,
+    userId,
+  });
 }
 
 function findById(lst: ChatMessage[], id: string): ChatMessage | null {
@@ -407,20 +431,8 @@ function testBuildToolResultIndex() {
 async function testPerSessionLoading() {
   console.log("=== per-session loading/loaded flags ===");
   resetStores();
-  useInstancesStore.setState((s) => ({
-    ...s,
-    activeInstanceId: "fake-instance",
-    instances: [
-      {
-        id: "fake-instance",
-        name: "Fake",
-        baseUrl: "http://fake",
-        agents: [],
-        agentsFetchedAt: 0,
-        lastProbeAt: Date.now(),
-      } as any,
-    ],
-    getClient: ((_id: string) => ({
+  installMockClient({
+    client: {
       getSession: async (sid: string) => {
         await new Promise((r) => setTimeout(r, 60));
         return { session_id: sid, agent_id: "fake-agent", chat_history: [] };
@@ -429,8 +441,8 @@ async function testPerSessionLoading() {
         await new Promise((r) => setTimeout(r, 60));
         return [];
       },
-    })) as any,
-  }));
+    },
+  });
 
   const sessionA = "session-A";
   const sessionB = "session-B";
@@ -492,18 +504,9 @@ async function testLoadHistoryError() {
   const origWarn = console.warn;
   console.warn = (...args: unknown[]) => warnCalls.push(args);
   try {
-    useInstancesStore.setState({
-      activeInstanceId: "inst-r8g",
-      instances: [
-        {
-          id: "inst-r8g",
-          name: "test",
-          baseUrl: "http://localhost:0",
-          agents: [{ id: "agent-r8g", name: "agent-r8g" } as any],
-          agentsFetchedAt: Date.now(),
-        } as any,
-      ],
-      getClient: ((_id: string) => ({
+    installMockClient({
+      agentId: "agent-r8g",
+      client: {
         getSession: async (): Promise<AgSessionDetail> => ({
           session_id: "sess-r8g",
           session_type: "agent",
@@ -519,7 +522,7 @@ async function testLoadHistoryError() {
         getSessionRuns: async (): Promise<AgRunResponse[]> => {
           throw new Error("network 500");
         },
-      })) as any,
+      },
     });
     await useChatStore.getState().loadHistory("sess-r8g");
     eq(
@@ -555,18 +558,9 @@ async function testStaleLoadHistory() {
       getSessionRuns: async () => [],
     };
 
-  useInstancesStore.setState({
-    activeInstanceId: "inst-r8h",
-    instances: [
-      {
-        id: "inst-r8h",
-        name: "test",
-        baseUrl: "http://localhost:0",
-        agents: [{ id: "agent-r8h", name: "agent-r8h" } as any],
-        agentsFetchedAt: Date.now(),
-      } as any,
-    ],
-    getClient: ((_id: string) => activeClient) as any,
+  installMockClient({
+    agentId: "agent-r8h",
+    client: activeClient,
   });
 
   const slowPromise = useChatStore.getState().loadHistory("sess-r8h");
@@ -631,19 +625,10 @@ async function testSendMessageUpsertsSessionDuringStreaming() {
   // 会用服务端响应覆盖本地缓存，这样测试结束时本地列表仍然有这条 session。
   let serverSideSession: any = null;
 
-  useInstancesStore.setState({
-    activeInstanceId: "inst-up",
-    instances: [
-      {
-        id: "inst-up",
-        name: "test",
-        baseUrl: "http://localhost:0",
-        userId: "mike",
-        agents: [{ id: "agent-up", name: "agent-up" } as any],
-        agentsFetchedAt: Date.now(),
-      } as any,
-    ],
-    getClient: ((_id: string) => ({
+  installMockClient({
+    agentId: "agent-up",
+    userId: "mike",
+    client: {
       runAgent: async function* (
         agentId: string,
         body: any,
@@ -674,15 +659,15 @@ async function testSendMessageUpsertsSessionDuringStreaming() {
           total_pages: 1,
         },
       }),
-    })) as any,
+    },
   });
 
   // 拦截 upsertSession：记录调用、把 serverSideSession 也同步更新
   const origUpsert = useSessionsStore.getState().upsertSession;
   useSessionsStore.setState({
-    upsertSession: (instanceId, session) => {
-      upsertCalls.push({ instanceId, session });
-      origUpsert(instanceId, session);
+    upsertSession: (agentId, session) => {
+      upsertCalls.push({ agentId, session });
+      origUpsert(agentId, session);
       serverSideSession = { ...session, user_id: "mike" };
     },
   });

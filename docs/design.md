@@ -198,29 +198,52 @@ partition 算法抽出到 `src/lib/message-verbosity.ts` 作为纯函数（25 �
 
 ## 5. 状态管理
 
-### 5.1 4 个独立 store
+### 5.1 单体 → monorepo 拆分 (v0.0.13)
 
-| Store | 职责 | 持久化 |
-|-------|------|--------|
-| `instancesStore` | AGNO 实例 CRUD（含 per-instance `userId`）+ AgnoClient 缓存 | localStorage |
-| `sessionsStore` | 每个实例的 session 列表 | 内存（每次重启重拉） |
-| `chatStore` | 当前 session 消息 + ChatRunner | 内存 |
-| `uiStore` | 临时 UI 状态（sub-agent 面板栈、命令面板、HITL approval、添加实例对话框、`filePreviewPanelOpen` / `filePreviewTabs` 预览侧栏） | 内存 |
-| `settingsStore` | 用户偏好（主题 / 滚动 / 打字机 / auto-update / filePreviewWidth / hideReasoning / briefToolCalls 等；不含 userId） | localStorage |
+`agno-chat` 从 `src/` 内嵌的子系统抽出到 workspace 包 `packages/agno-chat/`。拆分的目的是把"chat 核心"和"AGNO 桌面壳"解耦，方便第三方嵌入 `<ChatPanel>`。
 
-**设计原则**：
-- 每个 store 职责单一，避免互相引用
-- 实例相关的客户端缓存放在 instancesStore（按 id 索引）
-- 当前 session id 在 sessionsStore，消息在 chatStore（按 sessionId 索引）
-- 跨 store 通信用 `useXxxStore.getState()` 同步获取
+**Store 拓扑（v0.0.13+）**：
 
-### 5.2 关键不变量
+| Store | 位置 | 职责 | 持久化 |
+|-------|------|------|--------|
+| `chatStore` | `packages/agno-chat/src/stores/chat-store.ts` | 当前 session 消息 + ChatRunner + `_client` / `_agentId` / `_userId` 注入字段 | 内存 |
+| `sessionsStore` | `packages/agno-chat/src/stores/sessions-store.ts` | 按 `agentId` 索引的 session 列表 + 同样的 `_client` / `_agentId` / `_userId` 注入字段 | 内存 |
+| `uiStore` | `packages/agno-chat/src/stores/ui-store.ts` | 临时 UI 状态（sub-agent 面板栈、HITL approval、`filePreviewTabs` / `filePreviewPanelOpen` / `previewFile` 预览侧栏、`showAddInstance` / `instancesPanelOpen` / `commandOpen` 等 app 共享字段） | 内存 |
+| `settingsStore` | `packages/agno-chat/src/stores/settings-store.ts` | 用户偏好（主题 / 滚动 / hideReasoning / briefToolCalls / chatSessionsWidth / filePreviewWidth / autoCheckUpdate 等） | localStorage (`agno:settings`) |
+| `instancesStore` | `src/stores/instances-store.ts`（**仍在 app 层**） | 多实例 CRUD（实例列表 + `userId` per-instance + AgnoClient 缓存 + probeInstance / loadAgents / getClient） | localStorage (`agno:instances`, `agno:active-instance`) |
 
-1. **activeInstanceId 唯一**：同时只有一个活跃实例
-2. **sessionId 唯一标识**：所有消息按 sessionId 索引
-3. **ChatRunner 唯一**：一次只有一个 runner 实例，abort 后再创建
-4. **localStorage 仅存轻量数据**：实例配置、用户偏好；不存消息内容（避免大体积）
-5. **user_id per-instance**：`AgnoInstance.userId` 是该实例的身份，**不同实例可有不同 user_id**。AGNO 用它归类该实例的 memory / session / user-level 数据。聊天时 `chat-store.sendMessage` 把 `active.userId` 透传给 `ChatRunner.run`，最终写到 `POST /agents/{id}/runs` 的 `user_id` 字段；拉历史 session 列表时 `sessions-store.loadSessions` 把 `inst.userId` 作为 `user_id` query 透传给 `GET /sessions?user_id=...`，并在客户端做一次 defensive 过滤（服务端不严格过滤时仍能隔离）。`sessionsUserId[instanceId]` 隐式作为缓存 key 的一部分——实例的 userId 一变就自动 force reload，不需要调用方显式 invalidate。dev / staging / prod 不同实例的对话、记忆自然隔离。
+**关键不变量**：
+1. **chat-store / sessions-store 之间的 client / agentId / userId 一致**：两个 store 的 `setContext({ client, agentId, userId })` 必须**同时调用**（由 `<ChatPanel>` 包装器保证）。client 来自 `AgnoClient`，由 `<ChatPanel baseUrl>` + auth props 构造。
+2. **chat-store / sessions-store 不直接依赖 instances-store**：所有跨 store 信息通过 `setContext` 注入；store 内部只用 `get()._client` / `_agentId` / `_userId`，不调 `useInstancesStore.getState()`。
+3. **ui-store / settings-store 单例在包内 create()，app 通过 shim 复用**：避免 dual-store 重复挂载。`src/stores/ui-store.ts` / `src/stores/settings-store.ts` 是 `export * from "agno-chat"` 的 shim，运行时是同一个 zustand store 实例。
+4. **instances-store 仍在 app 层**：它的字段（`userId`、`agents` 缓存、`lastProbeAt` 等）和 `tauriFetcher` 注入是 app-only 的；包内 `<AgentPicker>` 改成 props-based（接收 `instance` / `agents` / `loadingAgents` / `onRefreshAgents` / `onFixCors`），由 `ChatPage` 把 `useInstancesStore` 的状态桥接过去。
+5. **activeInstanceId 唯一**：同时只有一个活跃实例
+6. **sessionId 唯一标识**：所有消息按 sessionId 索引
+7. **ChatRunner 唯一**：一次只有一个 runner 实例，abort 后再 create
+8. **localStorage 仅存轻量数据**：实例配置、用户偏好；不存消息内容
+9. **user_id per-instance**：`AgnoInstance.userId` 通过 `ChatPage` 的 `userId={active.userId}` 传给 `<ChatPanel>`，包装器在 `useEffect` 里调两个 store 的 `setContext({ userId })`。AGNO 用它归类 memory / session / user-level 数据；`sessions-store.loadSessions` 把它作为 `user_id` query 透传给 `GET /sessions?user_id=...`，并在客户端做一次 defensive 过滤。`sessionsUserId[agentId]` 隐式作为缓存 key 的一部分——`_userId` 一变就自动 force reload。
+
+### 5.2 单例与 shim
+
+`src/stores/{chat,sessions,ui,settings}-store.ts` 都是 re-export shim：
+
+```ts
+// src/stores/ui-store.ts
+export { useUIStore, tabsForSession, useActiveFileTab, findInTree, type FilePreviewTab }
+  from "../../packages/agno-chat/src/index.ts";
+```
+
+vite dev alias (`vite.config.ts`) 把 `"agno-chat"` 映射到 `packages/agno-chat/src/index.ts`，tsc 也走同样路径解析。所以 `useChatStore` 在 app 和 package 是**同一个** zustand store 实例——不存在 dual-store bug。
+
+### 5.3 旧 `byInstance` → 新 `byAgent`
+
+`sessions-store` 在 v0.0.13 重命名了缓存 key：`byInstance: { [instanceId]: AgSessionSummary[] }` → `byAgent: { [agentId]: AgSessionSummary[] }`。理由：
+
+- AGNO 的 agent id 是全局唯一（服务端生成），跨实例不会冲突——以前 `byInstance` 只是临时命名。
+- 包内的 chat-store / sessions-store 都用 `agentId` 作为 scoping key，跟 UI 上"agent 切换"的概念一致（一个 agent = 一组 sessions）。
+- `loadSessions(agentId)` / `loadMoreSessions(agentId)` / `removeSession(agentId, ...)` / `clearSessionsCache(agentId)` 等动作签名同步更新。
+
+旧的 app-side `SessionList.tsx` 跟着改了用 `useChatStore((s) => s._agentId)` 取 agentId；sessions-store 注入 `_agentId` 在 `<ChatPanel>` mount 时由 `useEffect` 完成。
 
 ## 6. SSE 处理细节
 
