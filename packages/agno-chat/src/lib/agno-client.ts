@@ -30,7 +30,7 @@ import { type AgSSEEvent, parseSSE, parseSSEData } from "./sse-parser";
 export interface AgnoClientOptions {
   baseUrl: string;
   token?: string | null;
-  /** 可选自定义 fetcher（注入测试或拦截器）。默认走 tauri-fetch（自动选浏览器 / Tauri）。 */
+  /** 可选自定义 fetcher（注入 Tauri fetcher / 测试 mock / 拦截器）。默认 globalThis.fetch。 */
   fetcher?: typeof fetch;
 }
 
