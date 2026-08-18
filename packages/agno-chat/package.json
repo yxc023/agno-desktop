@@ -14,7 +14,7 @@
   "files": ["dist", "src/styles.css", "README.md"],
   "scripts": {
     "dev": "vite build --watch --mode development",
-    "build": "tsc -b --noEmit && vite build",
+    "build": "tsc -b --emitDeclarationOnly && vite build",
     "typecheck": "tsc -b --noEmit",
     "lint": "cd ../.. && oxlint packages/agno-chat/src",
     "test": "bun test"
