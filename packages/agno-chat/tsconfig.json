@@ -9,6 +9,7 @@
     "jsx": "react-jsx",
     "lib": ["DOM", "DOM.Iterable", "ES2023"],
     "types": [],
+    "skipLibCheck": true,
     "ignoreDeprecations": "6.0"
   },
   "include": ["src/**/*"],
