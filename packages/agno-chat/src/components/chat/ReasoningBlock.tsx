@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { ChevronDown, Brain, Loader2 } from "lucide-react";
 import { cn } from "../../lib/utils";
-import { Markdown } from "@/components/markdown/Markdown";
-import { useSettingsStore } from "@/stores/settings-store";
+import { Markdown } from "../../markdown/Markdown";
+import { useSettingsStore } from "../../stores/settings-store";
 
 interface ReasoningBlockProps {
   text: string;

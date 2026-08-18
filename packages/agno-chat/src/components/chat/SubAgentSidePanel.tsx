@@ -18,12 +18,12 @@ import {
   Copy,
 } from "lucide-react";
 import { formatRelativeTime } from "../../lib/utils";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { useChatStore, useSubMessageById } from "@/stores/chat-store";
+import { Button } from "../../ui/button";
+import { Badge } from "../../ui/badge";
+import { useChatStore, useSubMessageById } from "../../stores/chat-store";
 import type { ChatMessage } from "../../lib/message-types";
-import { useSessionsStore } from "@/stores/sessions-store";
-import { useUIStore } from "@/stores/ui-store";
+import { useSessionsStore } from "../../stores/sessions-store";
+import { useUIStore } from "../../stores/ui-store";
 import { MessageContent } from "./MessageContent";
 
 export function SubAgentSidePanel() {

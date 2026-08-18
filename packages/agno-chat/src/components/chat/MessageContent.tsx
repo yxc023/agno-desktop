@@ -28,13 +28,13 @@ import {
 } from "lucide-react";
 import { memo, useEffect, useState } from "react";
 import { cn } from "../../lib/utils";
-import { MarkdownStream } from "@/components/markdown/MarkdownStream";
+import { MarkdownStream } from "../../markdown/MarkdownStream";
 import { openExternalUrl } from "../../lib/open-external-url";
 import { ReasoningBlock } from "./ReasoningBlock";
 import { ToolCallCard } from "./ToolCallCard";
 import { ToolCallGroup } from "./ToolCallGroup";
-import { useSubMessageById } from "@/stores/chat-store";
-import { useSettingsStore } from "@/stores/settings-store";
+import { useSubMessageById } from "../../stores/chat-store";
+import { useSettingsStore } from "../../stores/settings-store";
 import type { ChatMessage, MessagePart } from "../../lib/message-types";
 import { partitionParts } from "../../lib/message-verbosity";
 import { stripThinkTags } from "../../lib/strip-think-tags";

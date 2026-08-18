@@ -6,17 +6,17 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
+} from "../../ui/dialog";
+import { Button } from "../../ui/button";
+import { Textarea } from "../../ui/input";
+import { ScrollArea } from "../../ui/scroll-area";
 import { AlertTriangle, ShieldCheck, Wrench, CheckCircle2, X } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
-import { CodeBlock } from "@/components/markdown/CodeBlock";
-import { useChatStore } from "@/stores/chat-store";
-import { useUIStore } from "@/stores/ui-store";
-import { useActiveInstance } from "@/stores/instances-store";
-import { useSessionsStore } from "@/stores/sessions-store";
+import { Badge } from "../../ui/badge";
+import { CodeBlock } from "../../markdown/CodeBlock";
+import { useChatStore } from "../../stores/chat-store";
+import { useUIStore } from "../../stores/ui-store";
+import { useActiveInstance } from "../../stores/instances-store";
+import { useSessionsStore } from "../../stores/sessions-store";
 import { useEffect } from "react";
 
 export function ApprovalDialog() {
@@ -37,7 +37,7 @@ export function ApprovalDialog() {
       setPending({
         runId: msg.pauseInfo.runId,
         agentId: useChatStore.getState().selectedAgentId ?? "",
-        sessionId: msg.sessionId,
+        sessionId: msg.sessionId ?? "",
         toolCalls: msg.pauseInfo.toolCalls,
       });
     } else if (!msg?.awaitingInput && pending) {

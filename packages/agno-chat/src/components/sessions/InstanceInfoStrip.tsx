@@ -15,7 +15,7 @@
  */
 
 import { Loader2 } from "lucide-react";
-import { useActiveInstance } from "@/stores/instances-store";
+import { useActiveInstance } from "../../stores/instances-store";
 
 export function InstanceInfoStrip() {
   const active = useActiveInstance();

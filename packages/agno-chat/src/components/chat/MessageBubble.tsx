@@ -7,12 +7,12 @@ import {
 } from "lucide-react";
 import { memo, useCallback, useState } from "react";
 import { cn, copyToClipboard, formatRelativeTime } from "../../lib/utils";
-import { Markdown } from "@/components/markdown/Markdown";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
+import { Markdown } from "../../markdown/Markdown";
+import { Button } from "../../ui/button";
+import { Badge } from "../../ui/badge";
 import type { ChatMessage, MessagePart } from "../../lib/message-types";
-import { useUIStore } from "@/stores/ui-store";
-import { useLatestInputTokens } from "@/stores/chat-store";
+import { useUIStore } from "../../stores/ui-store";
+import { useLatestInputTokens } from "../../stores/chat-store";
 import { estimateTokens } from "../../lib/estimate-tokens";
 import { MessageContent } from "./MessageContent";
 

@@ -7,7 +7,7 @@ import {
   FileText,
 } from "lucide-react";
 import { cn, copyToClipboard } from "../../lib/utils";
-import { CodeBlock } from "@/components/markdown/CodeBlock";
+import { CodeBlock } from "../../markdown/CodeBlock";
 import { openExternalUrl } from "../../lib/open-external-url";
 import type { ToolCallPart } from "../../lib/message-types";
 import {

@@ -14,16 +14,16 @@ import {
   Check,
   ChevronDown,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { Button } from "../../ui/button";
+import { Input } from "../../ui/input";
+import { ScrollArea } from "../../ui/scroll-area";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { Skeleton } from "@/components/ui/skeleton";
+} from "../../ui/dropdown-menu";
+import { Skeleton } from "../../ui/skeleton";
 import { cn, copyToClipboard, formatRelativeTime, truncate } from "../../lib/utils";
 import { useSessionsStore } from "../../stores/sessions-store";
 import { useChatStore } from "../../stores/chat-store";

@@ -42,16 +42,16 @@ import {
   Loader2,
   X,
 } from "lucide-react";
-import { Markdown } from "@/components/markdown/Markdown";
-import { CodeBlock } from "@/components/markdown/CodeBlock";
-import { Button } from "@/components/ui/button";
+import { Markdown } from "../../markdown/Markdown";
+import { CodeBlock } from "../../markdown/CodeBlock";
+import { Button } from "../../ui/button";
 import { cn, copyToClipboard } from "../../lib/utils";
 import { openExternalUrl } from "../../lib/open-external-url";
 import {
   useActiveFileTab,
   useUIStore,
   type FilePreviewTab,
-} from "@/stores/ui-store";
+} from "../../stores/ui-store";
 import { fetchPreviewContent, FileFetchError } from "../../lib/file-fetcher";
 import type { PreviewKind } from "../../lib/preview-kind";
 

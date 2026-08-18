@@ -1,13 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { Send, Paperclip, X, Square, Loader2, FileText, AlertTriangle, User } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/input";
+import { Button } from "../../ui/button";
+import { Textarea } from "../../ui/input";
 import { cn } from "../../lib/utils";
 import { shouldSendOnEnter } from "../../lib/ime-composing";
-import { useChatStore, useCurrentSessionMessages } from "@/stores/chat-store";
-import { useActiveInstance } from "@/stores/instances-store";
-import { useSessionsStore } from "@/stores/sessions-store";
-import { UserIdSetupDialog } from "@/components/common/UserIdSetupDialog";
+import { useChatStore, useCurrentSessionMessages } from "../../stores/chat-store";
+import { useActiveInstance } from "../../stores/instances-store";
+import { useSessionsStore } from "../../stores/sessions-store";
 import { AgentPicker } from "./AgentPicker";
 
 export function MessageInput() {
@@ -31,7 +30,6 @@ export function MessageInput() {
   const [text, setText] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [sending, setSending] = useState(false);
-  const [showUserIdSetup, setShowUserIdSetup] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -60,7 +58,6 @@ export function MessageInput() {
 
   async function handleSend() {
     if (needUserId) {
-      setShowUserIdSetup(true);
       return;
     }
     const trimmed = text.trim();
@@ -115,16 +112,12 @@ export function MessageInput() {
     <div className="w-full min-w-[480px] border-t border-border bg-background/80 backdrop-blur">
       <div className="mx-auto max-w-4xl px-4 py-3">
         {needUserId && (
-          <button
-            onClick={() => setShowUserIdSetup(true)}
-            className="mb-2 flex w-full items-center gap-2 rounded-md border border-warning/40 bg-warning/[0.04] px-3 py-2 text-left transition-colors hover:bg-warning/[0.08]"
-          >
+          <div className="mb-2 flex w-full items-center gap-2 rounded-md border border-warning/40 bg-warning/[0.04] px-3 py-2 text-left">
             <AlertTriangle className="h-3.5 w-3.5 text-warning shrink-0" />
             <div className="flex-1 text-[12px] text-warning">
-              还没有设置 user_id，点击设置后才能发送消息
+              请设置 user_id 后发送消息
             </div>
-            <span className="font-mono text-[10.5px] text-warning">SETUP →</span>
-          </button>
+          </div>
         )}
 
         {files.length > 0 && (
@@ -228,28 +221,14 @@ export function MessageInput() {
         <div className="mt-1.5 flex min-w-0 items-center gap-2 px-1">
           <AgentPicker className="min-w-0 flex-shrink" />
           <div className="flex-1 min-w-0" />
-          <button
-            onClick={() => setShowUserIdSetup(true)}
-            className="flex shrink-0 items-center gap-1 text-[10px] text-muted-foreground/80 hover:text-foreground"
-            title="点击修改 user_id"
-          >
+          <span className="flex shrink-0 items-center gap-1 text-[10px] text-muted-foreground/80">
             <User className="h-2.5 w-2.5" />
             <span className="font-mono">
               user_id: {userId.trim() || "未设置"}
             </span>
-          </button>
+          </span>
         </div>
       </div>
-
-      {active && (
-        <UserIdSetupDialog
-          open={showUserIdSetup}
-          onOpenChange={setShowUserIdSetup}
-          instanceId={active.id}
-          instanceName={active.name}
-          force={needUserId}
-        />
-      )}
     </div>
   );
 }

@@ -27,23 +27,23 @@ import {
   RefreshCw,
   Terminal,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Button } from "../../ui/button";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+} from "../../ui/select";
 import { cn } from "../../lib/utils";
 import {
   useActiveAgents,
   useActiveInstance,
   useIsLoadingAgents,
   useInstancesStore,
-} from "@/stores/instances-store";
-import { useSessionsStore } from "@/stores/sessions-store";
-import { useChatStore } from "@/stores/chat-store";
+} from "../../stores/instances-store";
+import { useSessionsStore } from "../../stores/sessions-store";
+import { useChatStore } from "../../stores/chat-store";
 import type { AgAgentResponse } from "../../lib/agno-types";
 
 interface Props {
@@ -58,9 +58,14 @@ export function AgentPicker({ className }: Props) {
   const loadAgents = useInstancesStore((s) => s.loadAgents);
 
   const currentSessionId = useSessionsStore((s) => s.currentSessionId);
-  const sessions = useSessionsStore((s) =>
-    active ? s.byInstance[active.id] ?? [] : []
-  );
+  const sessions = useSessionsStore((s) => {
+    if (!currentSessionId) return [];
+    for (const list of Object.values(s.byAgent)) {
+      const found = list.find((sess) => sess.session_id === currentSessionId);
+      if (found) return list;
+    }
+    return [];
+  });
   const currentSession = useMemo(
     () =>
       currentSessionId

@@ -40,7 +40,7 @@ import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "../../ui/tooltip";
 
 interface ContextProgressBarProps {
   /** 当前上下文 token 数（最近一次 LLM 调用的 input_tokens）；null 表示"还没有"。 */

@@ -10,8 +10,7 @@
     "types": [],
     "skipLibCheck": true,
     "ignoreDeprecations": "6.0",
-    "noEmit": false,
-    "emitDeclarationOnly": true
+    "noEmit": false
   },
   "include": ["src/**/*"],
   "exclude": ["dist", "tests"]
