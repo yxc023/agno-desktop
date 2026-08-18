@@ -9,6 +9,7 @@ import { create } from "zustand";
 import { AgnoClient } from "@/lib/agno-client";
 import type { AgAgentResponse, AgInfoResponse } from "@/lib/agno-types";
 import { loadJSON, saveJSON } from "@/lib/storage";
+import { createFetcher } from "@/lib/tauri-fetch";
 import { generateId } from "@/lib/utils";
 
 export interface AgnoInstance {
@@ -31,6 +32,8 @@ export interface AgnoInstance {
 
 const STORAGE_KEY = "agno:instances";
 const ACTIVE_KEY = "agno:active-instance";
+
+const tauriFetcher = createFetcher();
 
 interface InstancesState {
   instances: AgnoInstance[];
@@ -158,6 +161,7 @@ export const useInstancesStore = create<InstancesState>((set, get) => ({
     const client = new AgnoClient({
       baseUrl: inst.baseUrl,
       token: inst.token,
+      fetcher: tauriFetcher,
     });
     try {
       const info = await client.info();
@@ -199,6 +203,7 @@ export const useInstancesStore = create<InstancesState>((set, get) => ({
       const client = get().getClient(id) ?? new AgnoClient({
         baseUrl: inst.baseUrl,
         token: inst.token,
+        fetcher: tauriFetcher,
       });
       const agents = await client.listAgents();
       get().updateInstance(id, {
@@ -232,6 +237,7 @@ export const useInstancesStore = create<InstancesState>((set, get) => ({
     const client = new AgnoClient({
       baseUrl: inst.baseUrl,
       token: inst.token,
+      fetcher: tauriFetcher,
     });
     set((s) => ({ clients: { ...s.clients, [id]: client } }));
     return client;
