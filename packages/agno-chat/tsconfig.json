@@ -8,7 +8,8 @@
     "declarationMap": true,
     "jsx": "react-jsx",
     "lib": ["DOM", "DOM.Iterable", "ES2023"],
-    "types": []
+    "types": [],
+    "ignoreDeprecations": "6.0"
   },
   "include": ["src/**/*"],
   "exclude": ["dist", "tests"]
