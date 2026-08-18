@@ -2,7 +2,18 @@
 
 All notable changes to Agno Desktop are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## [0.0.13] - 2026-08-18
+
+### Added
+- **New workspace package `agno-chat`** (`packages/agno-chat/`) — exposes `<ChatPanel>` for embedding AGNO AgentOS chat into any React 19 app. Drops in via `import { ChatPanel } from "agno-chat"` plus `import "agno-chat/styles.css"`. Internally owns the AGNO client, chat runner, SSE parser, session management, message store, and all chat-related UI components. Themeable via CSS variables (`--agno-accent`, `--agno-radius`, etc.). App package.json slimmed by ~23 deps (now provided transitively).
+
+### Changed
+- **Monorepo restructure.** Root `package.json` now declares `"workspaces": ["packages/*"]`. Chat surface moved to `packages/agno-chat/src/`. App layer keeps multi-instance management, routing, settings, updater, Tauri shell. `packages/agno-chat/src/stores/chat-store.ts` and `sessions-store.ts` parameterized with injected context (`_client`/`_agentId`/`_userId`) instead of coupling to `useInstancesStore`.
+- **ChatPage simplified.** `src/pages/ChatPage.tsx` now a thin wrapper (~100 lines) that reads active instance and renders `<ChatPanel>`.
+- **ChatPanel rewritten.** Package's ChatPanel no longer imports app-level stores (settings-store, instances-store). Accepts settings/agents/callbacks via props.
+
+### Notes
+- Switching AGNO instances uses `<ChatPanel key={`${instId}-${agentId}`}>` — React remount drops old state cleanly.
 
 ## [0.0.12] - 2026-08-07
 
