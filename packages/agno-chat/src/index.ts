@@ -11,3 +11,15 @@ export type {
 
 export { AgnoClient } from "./lib/agno-client";
 export { resolveToolRender } from "./lib/tool-render-utils";
+
+// Internal store re-exports for app shim. These will be removed in Task 12
+// once the stores are parameterized.
+export {
+  useChatStore,
+  buildToolResultIndex,
+  useCurrentSessionMessages,
+  useSubMessageById,
+  useLatestInputTokens,
+  useLatestOutputTokens,
+  useLatestModelId,
+} from "./stores/chat-store";
