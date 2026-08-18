@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.0.12",
   "type": "module",
+  "workspaces": ["packages/*"],
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
@@ -10,6 +11,7 @@
     "lint": "oxlint",
     "typecheck": "tsc -b --noEmit",
     "test": "bun run scripts/test.ts",
+    "test:chat": "cd packages/agno-chat && bun test",
     "tauri": "tauri",
     "dev:desktop": "tauri dev",
     "build:desktop": "bun run scripts/build-desktop.ts"
